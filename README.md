@@ -135,7 +135,7 @@ uv run fantastical uninstall
 
 ## Authorship
 
-This project was created by an autonomous AI software engineering agent (Claude, Anthropic) and explicitly reviewed and approved by a human.
+This project was created by autonomous AI software engineering agents and explicitly reviewed and approved by a human.
 
 ## License
 
