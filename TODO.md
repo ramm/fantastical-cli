@@ -97,9 +97,11 @@ Same reverse-engineering approach as CalendarItemQuery:
 4. Compare against our generated format
 
 
-## ~~P2: Event deduplication key is fragile~~ DONE
+## P2: Event deduplication key is fragile
 
-Fixed: `fantasticalURL` is now included in shortcut output and used as the dedup key in `_get_events_for_range()`.
+`api._get_events_for_range` deduplicates multi-day events using `(title, startDate, endDate, calendar)`. Recurring events with identical fields are incorrectly collapsed.
+
+**Plan:** `fantasticalURL` is now included in `EVENT_PROPS` and `EVENT_FIELDS`, and `_get_events_for_range()` uses it as the dedup key — but this depends on the CalendarItemQuery shortcut working (P0). Untested.
 
 
 ## P2: `create_event` is fire-and-forget
@@ -109,11 +111,11 @@ Fixed: `fantasticalURL` is now included in shortcut output and used as the dedup
 **Fix:** Create a shortcut wrapping `FKRCreateFromInputIntent`, output created event properties.
 
 
-## ~~P2: Search performance~~ DONE
+## P2: Search performance
 
-CalendarItemQuery returns all events in one call. `search_events` now queries ±30 days with a single shortcut invocation instead of 29.
+Current `search_events` calls the schedule shortcut once per day across ±14 days (29 invocations). Code has been rewritten to use CalendarItemQuery with a single call and ±30 day range — but depends on CalendarItemQuery shortcut working (P0). Untested.
 
-Remaining optimization: could add a `title contains` filter directly in the CalendarItemQuery `WFContentItemFilter` to push filtering to Fantastical. Low priority since the current approach works well.
+Further optimization: could add a `title contains` filter directly in the CalendarItemQuery `WFContentItemFilter` to push filtering to Fantastical.
 
 
 ## P3: MCP server testing
