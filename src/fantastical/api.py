@@ -90,6 +90,29 @@ def create_event(sentence: str, calendar: str | None = None, notes: str | None =
     return fan_backend.create_event(sentence, calendar, notes)
 
 
+def _get_events_for_range(from_iso: str, to_iso: str) -> list[dict]:
+    """Get events across a date range by calling the schedule shortcut per day.
+
+    Deduplicates multi-day events that appear on multiple days.
+    """
+    start = date.fromisoformat(from_iso)
+    end = date.fromisoformat(to_iso)
+
+    all_events: list[dict] = []
+    seen: set[tuple] = set()
+    current = start
+    while current <= end:
+        day_events = _run_shortcut_or_raise(shortcuts.get_schedule, current.isoformat())
+        for ev in day_events:
+            key = (ev.get("title"), ev.get("startDate"), ev.get("endDate"))
+            if key not in seen:
+                seen.add(key)
+                all_events.append(ev)
+        current += timedelta(days=1)
+
+    return all_events
+
+
 def list_events(
     from_date: str = "today",
     to_date: str | None = None,
@@ -98,11 +121,17 @@ def list_events(
     """List events in a date range.
 
     Requires shortcuts. Dates accept 'today', 'tomorrow', 'yesterday', or YYYY-MM-DD.
+    Uses the Show Schedule shortcut per day, capped at 31 days.
     """
     resolved_from = _resolve_date(from_date)
     resolved_to = _resolve_date(to_date) if to_date else resolved_from
 
-    events = _run_shortcut_or_raise(shortcuts.get_events, resolved_from, resolved_to)
+    start = date.fromisoformat(resolved_from)
+    end = date.fromisoformat(resolved_to)
+    if (end - start).days > 30:
+        raise FantasticalError("Date range too large (max 31 days). Use a narrower range.")
+
+    events = _get_events_for_range(resolved_from, resolved_to)
 
     if calendar:
         cal_lower = calendar.lower()
@@ -121,21 +150,32 @@ def show_schedule(date_str: str = "today") -> list[dict]:
 
 
 def list_tasks(list_name: str | None = None, overdue: bool = False) -> list[dict]:
-    """List tasks, optionally filtered by list or overdue status.
+    """List overdue tasks, optionally filtered by list name.
 
-    Requires shortcuts.
+    Requires shortcuts. Uses the Overdue Tasks action (the only task action
+    available in Shortcuts). The overdue flag is accepted for backward
+    compatibility but all returned tasks are overdue.
     """
-    if overdue:
-        return _run_shortcut_or_raise(shortcuts.get_overdue_tasks)
-    return _run_shortcut_or_raise(shortcuts.get_tasks, list_name)
+    tasks = _run_shortcut_or_raise(shortcuts.get_overdue_tasks)
+    if list_name:
+        list_lower = list_name.lower()
+        tasks = [t for t in tasks if (t.get("list") or "").lower() == list_lower]
+    return tasks
 
 
 def search_events(query: str) -> list[dict]:
     """Search events by title.
 
-    Requires shortcuts.
+    Requires shortcuts. Searches events within ±14 days of today
+    using the Show Schedule shortcut, then filters by title.
     """
-    return _run_shortcut_or_raise(shortcuts.search_events, query)
+    today_date = date.today()
+    from_iso = (today_date - timedelta(days=14)).isoformat()
+    to_iso = (today_date + timedelta(days=14)).isoformat()
+
+    events = _get_events_for_range(from_iso, to_iso)
+    query_lower = query.lower()
+    return [e for e in events if query_lower in (e.get("title") or "").lower()]
 
 
 def check_setup() -> dict[str, bool]:

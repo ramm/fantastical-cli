@@ -49,21 +49,20 @@ app.shortcuts().map(s => s.properties());
 
 ## Current approach: Manual shortcut creation
 
-The CLI requires 5 helper shortcuts that the user creates manually in Shortcuts.app. Each shortcut:
+The CLI requires 2 helper shortcuts that the user creates manually in Shortcuts.app. Each shortcut:
 1. Takes text input from the CLI
 2. Calls one Fantastical App Intent action
 3. Formats the result as pipe-delimited text
 4. Outputs to stdout
 
+The `list_events` and `search_events` features reuse the "Show Schedule" shortcut internally — `list_events` calls it once per day in the requested range (max 31 days), and `search_events` calls it for ±14 days around today, then filters by title in Python. The `list_tasks` feature uses the "Overdue Tasks" shortcut with optional list-name filtering in Python.
+
 ### Required shortcuts
 
 | Name | Fantastical Action | Input | Output Format |
 |------|-------------------|-------|---------------|
-| `Fantastical - List Events` | Find Calendar Items (CalendarItemQuery) | `START_DATE,END_DATE` | `TITLE \| START \| END \| CALENDAR \| ALL_DAY \| LOCATION \| NOTES` |
 | `Fantastical - Show Schedule` | Show Schedule (FKRShowScheduleIntent) | `DATE` | `TITLE \| START \| END \| CALENDAR \| ALL_DAY \| LOCATION \| NOTES` |
-| `Fantastical - List Tasks` | Show Task List (FKRShowListIntent) | list name (optional) | `TITLE \| DUE_DATE \| LIST \| NOTES` |
 | `Fantastical - Overdue Tasks` | Overdue Tasks (FKROverdueRemindersIntent) | (none) | `TITLE \| DUE_DATE \| LIST \| NOTES` |
-| `Fantastical - Search Events` | Find Calendar Items (CalendarItemQuery, title filter) | search query | `TITLE \| START \| END \| CALENDAR \| ALL_DAY \| LOCATION \| NOTES` |
 
 ## TODO: Automatic shortcut generation
 
@@ -122,7 +121,7 @@ Another approach to explore: Shortcuts supports `shortcuts://` URL schemes that 
 
 ### Fallback
 
-If auto-generation proves impossible, the manual setup (5 shortcuts, ~30 seconds each) is acceptable. The `fantastical setup` command already walks users through it step by step.
+If auto-generation proves impossible, the manual setup (2 shortcuts, ~30 seconds each) is acceptable. The `fantastical setup` command already walks users through it step by step.
 
 ## Output parsing
 

@@ -7,27 +7,12 @@ import subprocess
 # Shortcut names used by this tool
 SHORTCUT_PREFIX = "Fantastical - "
 SHORTCUTS = {
-    "events": f"{SHORTCUT_PREFIX}List Events",
     "schedule": f"{SHORTCUT_PREFIX}Show Schedule",
-    "tasks": f"{SHORTCUT_PREFIX}List Tasks",
     "overdue": f"{SHORTCUT_PREFIX}Overdue Tasks",
-    "search": f"{SHORTCUT_PREFIX}Search Events",
 }
 
 # Instructions for creating each shortcut manually
 SHORTCUT_INSTRUCTIONS = {
-    "events": {
-        "name": SHORTCUTS["events"],
-        "steps": [
-            'Add action: "Find Calendar Items" (Fantastical)',
-            'Set filter: Start Date is between "Shortcut Input" dates',
-            "Add action: Repeat with each item",
-            'Add action: Text — format each item\'s properties as a line',
-            "End repeat, output combined text",
-        ],
-        "input": "Two dates separated by comma: START_DATE,END_DATE (YYYY-MM-DD)",
-        "output": "One event per line: TITLE | START | END | CALENDAR | ALL_DAY | LOCATION | NOTES",
-    },
     "schedule": {
         "name": SHORTCUTS["schedule"],
         "steps": [
@@ -38,16 +23,6 @@ SHORTCUT_INSTRUCTIONS = {
         "input": "A date (YYYY-MM-DD)",
         "output": "One event per line: TITLE | START | END | CALENDAR | ALL_DAY | LOCATION | NOTES",
     },
-    "tasks": {
-        "name": SHORTCUTS["tasks"],
-        "steps": [
-            'Add action: "Show Task List" (Fantastical)',
-            "Optionally set list name from Shortcut Input",
-            'Add action: Repeat with each item, format as text',
-        ],
-        "input": "Optional list name",
-        "output": "One task per line: TITLE | DUE_DATE | LIST | NOTES",
-    },
     "overdue": {
         "name": SHORTCUTS["overdue"],
         "steps": [
@@ -56,16 +31,6 @@ SHORTCUT_INSTRUCTIONS = {
         ],
         "input": "None",
         "output": "One task per line: TITLE | DUE_DATE | LIST | NOTES",
-    },
-    "search": {
-        "name": SHORTCUTS["search"],
-        "steps": [
-            'Add action: "Find Calendar Items" (Fantastical)',
-            'Set filter: Title contains "Shortcut Input"',
-            'Add action: Repeat with each item, format as text',
-        ],
-        "input": "Search query text",
-        "output": "One event per line: TITLE | START | END | CALENDAR | ALL_DAY | LOCATION | NOTES",
     },
 }
 
@@ -140,7 +105,7 @@ def run_shortcut(key: str, input_text: str | None = None) -> str:
     """Run a Fantastical helper shortcut and return its text output.
 
     Args:
-        key: Shortcut key (e.g. 'events', 'schedule', 'tasks')
+        key: Shortcut key (e.g. 'schedule', 'overdue')
         input_text: Optional text input to pass to the shortcut
 
     Returns:
@@ -248,27 +213,10 @@ def parse_task_output(output: str) -> list[dict]:
     return results
 
 
-def get_events(from_date: str, to_date: str) -> list[dict]:
-    """Get events in a date range via shortcuts.
-
-    Args:
-        from_date: Start date in YYYY-MM-DD format
-        to_date: End date in YYYY-MM-DD format
-    """
-    output = run_shortcut("events", f"{from_date},{to_date}")
-    return parse_pipe_delimited(output)
-
-
 def get_schedule(date: str) -> list[dict]:
     """Get schedule for a date via shortcuts."""
     output = run_shortcut("schedule", date)
     return parse_pipe_delimited(output)
-
-
-def get_tasks(list_name: str | None = None) -> list[dict]:
-    """Get tasks via shortcuts, optionally filtered by list name."""
-    output = run_shortcut("tasks", list_name)
-    return parse_task_output(output)
 
 
 def get_overdue_tasks() -> list[dict]:
@@ -277,7 +225,3 @@ def get_overdue_tasks() -> list[dict]:
     return parse_task_output(output)
 
 
-def search_events(query: str) -> list[dict]:
-    """Search events by title via shortcuts."""
-    output = run_shortcut("search", query)
-    return parse_pipe_delimited(output)

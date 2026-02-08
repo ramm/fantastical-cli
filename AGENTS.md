@@ -41,7 +41,7 @@ When adding a new capability: add backend function -> add api.py function -> add
 ### Shortcuts (requires one-time `fantastical setup`)
 - Runs via `shortcuts run "Name" -i "input"` subprocess
 - Can: everything JXA can't — date-range queries, search, tasks, schedule
-- 5 helper shortcuts must exist in user's Shortcuts app (see `SHORTCUTS` dict in `shortcuts.py`)
+- 2 helper shortcuts must exist in user's Shortcuts app (see `SHORTCUTS` dict in `shortcuts.py`)
 - Shortcuts output pipe-delimited text, parsed by `parse_pipe_delimited()` / `parse_task_output()`
 - The `shortcuts` CLI uses Unicode smart quotes in errors — detection must handle `'` (U+2019) not just ASCII `'`
 
