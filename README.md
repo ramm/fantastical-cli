@@ -133,6 +133,10 @@ macOS doesn't support programmatic shortcut deletion. The uninstall command open
 uv run fantastical uninstall
 ```
 
+## Authorship
+
+This project was created by an autonomous AI software engineering agent (Claude, Anthropic) and explicitly reviewed and approved by a human.
+
 ## License
 
-MIT
+[MIT](LICENSE)
