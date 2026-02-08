@@ -9,18 +9,15 @@ from datetime import date, timedelta
 import click
 
 from fantastical import api
-from fantastical.api import FantasticalError, ShortcutsNotConfigured
-from fantastical.backend.shortcuts import SHORTCUT_INSTRUCTIONS, SHORTCUTS
+from fantastical.api import FantasticalError, ShortcutsNotConfigured, SHORTCUTS, LEGACY_SHORTCUTS
 
 
-def _output(data, as_json: bool, format_fn=None):
+def _output(data, as_json: bool, format_fn):
     """Output data as JSON or human-readable format."""
     if as_json:
         click.echo(json.dumps(data, indent=2, default=str))
-    elif format_fn:
-        format_fn(data)
     else:
-        click.echo(json.dumps(data, indent=2, default=str))
+        format_fn(data)
 
 
 def _handle_error(e: Exception):
@@ -76,22 +73,6 @@ def _format_events(events: list[dict]):
             line += f"  @ {location}"
         click.echo(line)
 
-
-def _format_tasks(tasks: list[dict]):
-    if not tasks:
-        click.echo("No tasks found.")
-        return
-    for task in tasks:
-        title = task.get("title", "(no title)")
-        due = task.get("dueDate")
-        list_name = task.get("list")
-
-        line = f"  {title}"
-        if due:
-            line += f"  (due: {due})"
-        if list_name:
-            line += f"  [{list_name}]"
-        click.echo(line)
 
 
 def _format_selected(items: list[dict]):
@@ -151,39 +132,38 @@ def selected(ctx):
         _handle_error(e)
 
 
-@cli.group(invoke_without_command=True)
-@click.option("--from", "from_date", default=None, help="Start date (YYYY-MM-DD, 'today', 'tomorrow').")
-@click.option("--to", "to_date", default=None, help="End date (YYYY-MM-DD, 'today', 'tomorrow').")
+@cli.group()
 @click.option("--calendar", default=None, help="Filter by calendar name.")
 @click.pass_context
-def events(ctx, from_date, to_date, calendar):
+def events(ctx, calendar):
     """List calendar events. Requires shortcuts setup."""
     ctx.ensure_object(dict)
-    ctx.obj["from_date"] = from_date
-    ctx.obj["to_date"] = to_date
     ctx.obj["calendar"] = calendar
 
-    if ctx.invoked_subcommand is None:
-        # No subcommand — list events with provided dates
-        try:
-            data = api.list_events(
-                from_date=from_date or "today",
-                to_date=to_date,
-                calendar=calendar,
-            )
-            _output(data, ctx.obj["json"], _format_events)
-        except Exception as e:
-            _handle_error(e)
+
+@events.command(name="list")
+@click.option("--from", "from_date", default="today", help="Start date (YYYY-MM-DD, 'today', 'tomorrow').")
+@click.option("--to", "to_date", default=None, help="End date (YYYY-MM-DD, 'today', 'tomorrow').")
+@click.pass_context
+def list_events(ctx, from_date, to_date):
+    """List events in a date range."""
+    try:
+        data = api.list_events(
+            from_date=from_date,
+            to_date=to_date,
+            calendar=ctx.obj.get("calendar"),
+        )
+        _output(data, ctx.obj["json"], _format_events)
+    except Exception as e:
+        _handle_error(e)
 
 
 @events.command()
-@click.option("--calendar", default=None, help="Filter by calendar name.")
 @click.pass_context
-def today(ctx, calendar):
+def today(ctx):
     """Show today's events."""
-    cal = calendar or ctx.obj.get("calendar")
     try:
-        data = api.list_events(from_date="today", to_date="today", calendar=cal)
+        data = api.list_events(from_date="today", to_date="today", calendar=ctx.obj.get("calendar"))
         _output(data, ctx.obj["json"], _format_events)
     except Exception as e:
         _handle_error(e)
@@ -191,18 +171,16 @@ def today(ctx, calendar):
 
 @events.command()
 @click.option("--days", default=7, help="Number of days to look ahead (default: 7).")
-@click.option("--calendar", default=None, help="Filter by calendar name.")
 @click.pass_context
-def upcoming(ctx, days, calendar):
+def upcoming(ctx, days):
     """Show upcoming events for the next N days."""
-    cal = calendar or ctx.obj.get("calendar")
     today_date = date.today()
     end_date = today_date + timedelta(days=days)
     try:
         data = api.list_events(
             from_date=today_date.isoformat(),
             to_date=end_date.isoformat(),
-            calendar=cal,
+            calendar=ctx.obj.get("calendar"),
         )
         _output(data, ctx.obj["json"], _format_events)
     except Exception as e:
@@ -233,72 +211,158 @@ def add(ctx, sentence, calendar, notes):
         if ctx.obj["json"]:
             click.echo(json.dumps(result, indent=2))
         else:
-            click.secho("Event created: ", fg="green", nl=False)
+            click.secho("Event sent to Fantastical: ", fg="green", nl=False)
             click.echo(sentence)
     except Exception as e:
         _handle_error(e)
 
 
-@cli.command()
-@click.option("--list", "list_name", default=None, help="Filter by task list name.")
-@click.option("--overdue", is_flag=True, help="Show only overdue tasks.")
-@click.pass_context
-def tasks(ctx, list_name, overdue):
-    """List tasks. Requires shortcuts setup."""
-    try:
-        data = api.list_tasks(list_name, overdue)
-        _output(data, ctx.obj["json"], _format_tasks)
-    except Exception as e:
-        _handle_error(e)
-
-
-@cli.command()
-@click.argument("event_id")
-def show(event_id):
-    """Open an event in Fantastical by its URL/ID."""
-    import subprocess
-    url = event_id if event_id.startswith("x-fantastical") else f"x-fantastical3://show?id={event_id}"
-    subprocess.run(["open", url], check=True)
-
 
 @cli.command()
 def setup():
-    """Create or verify helper shortcuts for Fantastical integration."""
+    """Create or verify helper shortcuts for Fantastical integration.
+
+    Generates, signs, and imports Apple Shortcuts that bridge
+    Fantastical's App Intents to the command line.
+    """
     click.secho("Fantastical CLI — Shortcut Setup", bold=True)
     click.echo()
 
+    # Check for legacy shortcuts that should be removed
+    from fantastical.backend.shortcuts import check_legacy_shortcuts
+    legacy = check_legacy_shortcuts()
+    if legacy:
+        click.secho("Legacy shortcuts detected:", fg="yellow")
+        for name in legacy:
+            click.echo(f"  - {name}")
+        click.echo("  These are no longer used and can be removed from Shortcuts.app.")
+        click.echo()
+
+    # Check current status
     status = api.check_setup()
     all_ok = all(status.values())
 
     if all_ok:
-        click.secho("All shortcuts are installed!", fg="green")
+        click.secho("All shortcuts are already installed!", fg="green")
         click.echo()
         for key, name in SHORTCUTS.items():
             click.echo(f"  [ok] {name}")
         return
 
-    missing = {k: v for k, v in status.items() if not v}
-    installed = {k: v for k, v in status.items() if v}
+    missing = [k for k, ok in status.items() if not ok]
+    installed = [k for k, ok in status.items() if ok]
 
     if installed:
-        click.echo("Installed:")
+        click.echo("Already installed:")
         for key in installed:
             click.echo(f"  [ok] {SHORTCUTS[key]}")
         click.echo()
 
-    click.echo(f"Missing {len(missing)} shortcut(s). Please create them in the Shortcuts app:")
+    click.echo(f"Will create {len(missing)} shortcut(s):")
+    for key in missing:
+        click.echo(f"  - {SHORTCUTS[key]}")
     click.echo()
 
-    for i, (key, _) in enumerate(missing.items(), 1):
-        info = SHORTCUT_INSTRUCTIONS[key]
-        click.secho(f"  {i}. {info['name']}", bold=True)
-        for step in info["steps"]:
-            click.echo(f"     - {step}")
-        click.echo(f"     Input: {info['input']}")
-        click.echo(f"     Output: {info['output']}")
-        click.echo()
+    # Explain what will happen
+    click.secho("What to expect:", bold=True)
+    click.echo("  1. Shortcut files will be generated and signed (requires internet)")
+    click.echo("  2. Shortcuts.app will open an import dialog for each shortcut")
+    click.echo('     -> Click "Add Shortcut" to accept each one')
+    click.echo("  3. On first use, Fantastical will show a privacy prompt:")
+    click.echo('     "Allow ... to share 1 text item with Fantastical?"')
+    click.echo('     -> Click "Always Allow"')
+    click.echo()
 
-    click.echo("After creating the shortcuts, run `fantastical setup` again to verify.")
+    if not click.confirm("Proceed?"):
+        return
+
+    click.echo()
+
+    # Generate, sign, and import
+    try:
+        click.echo("Generating and signing shortcuts...")
+        click.echo("  (contacting Apple servers for signing — requires internet)")
+        click.echo()
+        from fantastical.backend.shortcut_gen import generate_shortcut_file, import_shortcut, SHORTCUT_BUILDERS
+
+        for key in missing:
+            name = SHORTCUTS[key]
+            click.echo(f"  Signing {name}...", nl=False)
+            path = generate_shortcut_file(key)
+            click.secho(" done", fg="green")
+
+            click.echo(f"  Importing {name}...")
+            import_shortcut(path)
+            click.echo()
+            click.secho(f'  -> Shortcuts.app: click "Add Shortcut" to accept.', bold=True)
+
+            # Wait for the user to confirm they accepted
+            click.pause("  Press any key after accepting the shortcut...")
+            click.echo()
+
+    except RuntimeError as e:
+        click.secho(f"Error: {e}", fg="red")
+        click.echo()
+        click.echo("Signing requires internet access. Check your connection and try again.")
+        sys.exit(1)
+
+    # Verify installation
+    click.echo("Verifying installation...")
+    status = api.check_setup()
+
+    if not all(status.values()):
+        click.echo()
+        click.secho("Some shortcuts were not detected:", fg="yellow")
+        for key, ok in status.items():
+            icon = "[ok]" if ok else "[missing]"
+            color = "green" if ok else "red"
+            click.secho(f"  {icon} {SHORTCUTS[key]}", fg=color)
+        click.echo()
+        click.echo("Try running `fantastical setup` again.")
+        return
+
+    click.echo()
+    for key, name in SHORTCUTS.items():
+        click.echo(f"  [ok] {name}")
+    click.echo()
+
+    # Test the shortcut to trigger privacy grant
+    click.secho("Testing shortcut with today's events...", bold=True)
+    click.echo()
+    click.echo("  macOS will show a privacy dialog:")
+    click.echo('    "Allow ... to interact with Fantastical?"')
+    click.echo()
+    click.secho('  IMPORTANT: Click "Always Allow" (not "Allow Once")', bold=True)
+    click.echo('  "Allow Once" will require approval on every single run.')
+    click.echo()
+    click.pause("  Press any key to run the test...")
+
+    try:
+        events = api.show_schedule("today")
+        click.echo()
+        if events:
+            click.secho(f"  Got {len(events)} event(s) for today.", fg="green")
+            for ev in events[:3]:
+                click.echo(f"    - {ev.get('title', '(no title)')}")
+            if len(events) > 3:
+                click.echo(f"    ... and {len(events) - 3} more")
+        else:
+            click.secho("  No events for today (that's OK — shortcut is working).", fg="green")
+    except Exception as e:
+        click.echo()
+        click.secho(f"  Test failed: {e}", fg="red")
+        click.echo()
+        click.echo("  If you dismissed the privacy dialog, run `fantastical setup` again.")
+        click.echo('  Make sure to click "Always Allow" when prompted.')
+        sys.exit(1)
+
+    click.echo()
+    click.secho("Setup complete!", fg="green", bold=True)
+    click.echo()
+    click.echo("You can now use:")
+    click.echo("  fantastical events today")
+    click.echo("  fantastical events --from 2026-01-01 --to 2026-01-31")
+    click.echo('  fantastical search "meeting"')
 
 
 @cli.command()

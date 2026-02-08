@@ -13,7 +13,8 @@ src/fantastical/
 ├── backend/
 │   ├── jxa.py            # osascript -l JavaScript subprocess runner
 │   ├── fantastical.py     # JXA scripts (calendars, selected) + URL scheme (create)
-│   └── shortcuts.py       # `shortcuts run` CLI wrapper (events, tasks, search)
+│   ├── shortcuts.py       # `shortcuts run` CLI wrapper (schedule, overdue)
+│   └── shortcut_gen.py    # Programmatic .shortcut file generation + signing
 ├── api.py                 # Business logic — both CLI and MCP call this
 ├── cli.py                 # Click CLI — user-facing, formats output
 └── server.py              # FastMCP server — thin JSON wrapper over api.py
@@ -33,16 +34,16 @@ When adding a new capability: add backend function -> add api.py function -> add
 ### JXA (no setup required)
 - Runs via `osascript -l JavaScript -e "..."` subprocess
 - Can: list calendars, get selected items
-- Cannot: query events by date, search, list tasks
+- Cannot: query events by date, search
 - Gotcha: wrap every property access in try/catch — Fantastical's JXA bridge throws `-1700` type conversion errors on missing/null properties
 - Gotcha: use `title` not `name` for calendars
 - Gotcha: `startDate().toISOString()` can throw; the current code handles this
 
 ### Shortcuts (requires one-time `fantastical setup`)
-- Runs via `shortcuts run "Name" -i "input"` subprocess
-- Can: everything JXA can't — date-range queries, search, tasks, schedule
-- 2 helper shortcuts must exist in user's Shortcuts app (see `SHORTCUTS` dict in `shortcuts.py`)
-- Shortcuts output pipe-delimited text, parsed by `parse_pipe_delimited()` / `parse_task_output()`
+- Runs via `shortcuts run "Name"` subprocess
+- Can: everything JXA can't — date-range queries, schedule, search
+- Helper shortcuts are **auto-generated** by `shortcut_gen.py`, signed, and imported during setup
+- Shortcuts output pipe-delimited text, parsed by `parse_pipe_delimited()`
 - The `shortcuts` CLI uses Unicode smart quotes in errors — detection must handle `'` (U+2019) not just ASCII `'`
 
 ### Backend selection table
@@ -55,8 +56,48 @@ When adding a new capability: add backend function -> add api.py function -> add
 | Events by date   | Shortcuts      | Yes             |
 | Show schedule    | Shortcuts      | Yes             |
 | Search events    | Shortcuts      | Yes             |
-| List tasks       | Shortcuts      | Yes             |
-| Overdue tasks    | Shortcuts      | Yes             |
+
+## Shortcut generation (shortcut_gen.py)
+
+Shortcuts are generated as binary plists, signed via `shortcuts sign --mode anyone`, and imported via `open`. The signing step contacts Apple servers and needs internet.
+
+**Key format discovery:** App Intent parameters MUST use `WFTextTokenString` encoding (string + attachmentsByRange with U+FFFC placeholders), NOT `WFTextTokenAttachment`. Using the wrong encoding causes Fantastical to show interactive pickers instead of using the bound variable. See `docs/shortcuts-format.md` for the full technical deep-dive.
+
+**Current shortcut (NOT WORKING — see TODO.md P0):**
+
+| Name | Intent / Query | Purpose | Status |
+|------|---------------|---------|--------|
+| `Fantastical - Find Events` | `CalendarItemQuery` (IntentCalendarItem) | Events across ALL calendars | **Broken** — runtime error |
+| `Fantastical - Show Schedule` (legacy) | `FKRShowScheduleIntent` | Events for a given date | Works but only one calendar set |
+
+The find events shortcut flow: CalendarItemQuery(startDate between start..end) -> Repeat Each -> pipe-delimited text (title\|start\|end\|cal\|allDay\|loc\|notes\|url) -> Output. Python-side date filtering narrows to the exact requested range.
+
+**Key discoveries:**
+- CalendarItemQuery filter dates must be native `datetime` plist objects, NOT strings. String dates render as empty "Date" placeholders in Shortcuts.app.
+- Dynamic dates via WFTextTokenString inside `Values.Date`/`Values.AnotherDate` are not supported — entity query filters use a different structure from If conditions. See `docs/cherri.md`.
+- The generated shortcut still fails at runtime despite correct rendering in the UI. Next step: extract plist from a manually-created working shortcut and diff.
+
+**Historical note:** The previous `FKRShowScheduleIntent` approach only returned events from the active/default calendar set — events from other calendars were silently omitted. CalendarItemQuery queries ALL calendars.
+
+### Adding a new generated shortcut
+
+1. Add a `build_*()` function in `shortcut_gen.py` following existing patterns
+2. Add entry to `SHORTCUT_BUILDERS` dict
+3. Add entry to `SHORTCUTS` dict in `shortcuts.py`
+4. Add wrapper function in `shortcuts.py` that calls `run_shortcut()` + parser
+5. Wire through `api.py` -> `cli.py` -> `server.py`
+
+### Shortcut file locations
+
+Shortcuts are stored in a system database, NOT as individual files on disk. There is no `shortcuts export` CLI command. The only way to get a `.shortcut` file is via the Shortcuts.app Share menu.
+
+### Shortcut format gotchas
+
+- App Intent parameters: use `_token_string_param()` (WFTextTokenString), NOT `_var_attachment()` (WFTextTokenAttachment)
+- Enum parameters (e.g., `day: "specificDate"`): set as plain strings, no wrapping
+- Boolean parameters (e.g., `skipTodayPastEvents: false`): set as plain booleans
+- Signing timeout: 120s (Apple servers can be slow, occasionally 503/504)
+- No programmatic shortcut deletion — `fantastical uninstall` opens each in Shortcuts.app for manual deletion
 
 ## Key conventions
 
@@ -73,22 +114,8 @@ When adding a new capability: add backend function -> add api.py function -> add
 3. Add `@cli.command()` in `cli.py` with `--json` support
 4. Add `@mcp.tool()` in `server.py`
 
-### Adding a new shortcut
-1. Add entry to `SHORTCUTS` dict in `shortcuts.py` (key + display name)
-2. Add entry to `SHORTCUT_INSTRUCTIONS` dict with manual creation steps
-3. Add wrapper function (e.g. `get_foo()`) that calls `run_shortcut()` + parser
-4. Wire through `api.py` -> `cli.py` -> `server.py`
-
-### Automatic shortcut generation (TODO)
-The .shortcut plist format for third-party App Intent actions is not publicly documented. To enable `fantastical setup` to auto-create shortcuts:
-1. Manually create a shortcut in Shortcuts.app that uses a Fantastical App Intent action
-2. Export it, convert with `plutil -convert xml1`
-3. Identify the WFWorkflowActionIdentifier format for Fantastical intents
-4. Template the plist, sign with `shortcuts sign --mode anyone`, import with `shortcuts import`
-See `docs/shortcuts-format.md` for current findings.
-
 ### Shortcut deletion (important limitation)
-There is **no programmatic way to delete shortcuts** on macOS. The `shortcuts` CLI has no `delete` subcommand, and JXA's `delete()` method silently no-ops. The `fantastical uninstall` command works around this by looking up shortcut UUIDs via JXA and opening each one in Shortcuts.app via `shortcuts://open-shortcut?id=UUID` for the user to delete manually. See `docs/shortcuts-format.md` for full details of what was tested.
+There is **no programmatic way to delete shortcuts** on macOS. The `shortcuts` CLI has no `delete` subcommand, and JXA's `delete()` method silently no-ops. The `fantastical uninstall` command works around this by looking up shortcut UUIDs via JXA and opening each one in Shortcuts.app via `shortcuts://open-shortcut?id=UUID` for the user to delete manually.
 
 ## Testing
 
@@ -98,7 +125,7 @@ uv run fantastical calendars              # JXA — should list calendars
 uv run fantastical --json calendars       # JSON mode
 uv run fantastical selected               # JXA — whatever's selected in Fantastical
 uv run fantastical events today           # Shortcuts — will error if not set up
-uv run fantastical setup                  # Shows which shortcuts are missing
+uv run fantastical setup                  # Generates, signs, and imports shortcuts
 uv run fantastical uninstall              # Opens shortcuts in Shortcuts.app for deletion
 ```
 
@@ -109,12 +136,16 @@ uv run fantastical uninstall              # Opens shortcuts in Shortcuts.app for
 - Python >= 3.10
 - macOS with Fantastical installed
 - `osascript` (system) for JXA
-- `shortcuts` (system) for Apple Shortcuts
-- `open` (system) for URL schemes
+- `shortcuts` (system) for Apple Shortcuts CLI
+- `open` (system) for URL schemes and shortcut import
+- Internet access for `shortcuts sign` (one-time during setup)
 
 ## Files you should read first
 
-1. `docs/fantastical-app-intents.md` — Complete catalog of Fantastical's App Intents (16 actions, 3 queries, 5 entities)
-2. `docs/jxa-findings.md` — What works and doesn't work with Fantastical's JXA dictionary
-3. `docs/shortcuts-format.md` — What we know about .shortcut plist format
-4. `api.py` — The core logic, small and readable
+1. `TODO.md` — Prioritized task list with current blockers and implementation plans
+2. `docs/shortcuts-format.md` — Complete .shortcut plist format documentation, variable encoding, AEA extraction, CalendarItemQuery format, Fantastical-specific findings
+3. `docs/fantastical-app-intents.md` — Complete catalog of Fantastical's App Intents (16 actions, 3 queries, 5 entities)
+4. `docs/jxa-findings.md` — What works and doesn't work with Fantastical's JXA dictionary
+5. `docs/why-not-eventkit.md` — Why EventKit/Calendar.app can't work
+6. `docs/cherri.md` — Cherri Shortcuts compiler, useful as a plist format reference
+7. `api.py` — The core logic, small and readable

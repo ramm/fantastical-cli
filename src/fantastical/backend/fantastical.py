@@ -66,8 +66,9 @@ def get_selected_items() -> list[dict]:
 def create_event(sentence: str, calendar: str | None = None, notes: str | None = None) -> dict:
     """Create an event using Fantastical's natural language parsing.
 
-    Uses the x-fantastical3://parse URL scheme.
-    Returns dict with 'success' and 'sentence' keys.
+    Uses the x-fantastical3://parse URL scheme. The URL scheme is fire-and-forget:
+    there is no way to confirm Fantastical actually created the event.
+    Returns dict with 'sent' status and the request parameters.
     """
     url = f"x-fantastical3://parse?s={quote(sentence)}"
     if calendar:
@@ -78,4 +79,4 @@ def create_event(sentence: str, calendar: str | None = None, notes: str | None =
     url += "&add=1"
 
     subprocess.run(["open", url], check=True, timeout=10)
-    return {"success": True, "sentence": sentence, "calendar": calendar}
+    return {"sent": True, "sentence": sentence, "calendar": calendar}

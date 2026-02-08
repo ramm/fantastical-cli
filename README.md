@@ -1,4 +1,4 @@
-# fantastical-cli
+# fantastical-mcp
 
 A CLI and [MCP server](https://modelcontextprotocol.io/) for [Fantastical](https://flexibits.com/fantastical) on macOS.
 
@@ -13,8 +13,8 @@ Fantastical keeps its own calendar store that is invisible to Calendar.app and E
 ## Install
 
 ```bash
-git clone git@github.com:ramm/fantastical-cli.git
-cd fantastical-cli
+git clone git@github.com:ramm/fantastical-mcp.git
+cd fantastical-mcp
 uv sync
 ```
 
@@ -23,7 +23,7 @@ uv sync
 On first run, macOS will prompt you to grant permissions. Click **Allow** when asked:
 
 - **Automation**: your terminal app (Terminal, iTerm, etc.) needs permission to control Fantastical via Apple Events. Triggered by commands like `calendars` and `selected`.
-- **Shortcuts**: running shortcuts from the terminal may prompt you to allow your terminal to run shortcuts. Triggered by commands like `events`, `tasks`, and `search`.
+- **Shortcuts**: running shortcuts from the terminal may prompt you to allow your terminal to run shortcuts. Triggered by commands like `events` and `search`.
 
 These prompts only appear once. If you accidentally deny a permission, you can re-enable it in **System Settings > Privacy & Security > Automation** (or **Shortcuts**).
 
@@ -41,7 +41,7 @@ uv run fantastical selected
 # Create an event using natural language
 uv run fantastical add "Lunch with Alex tomorrow at noon"
 
-# Set up helper shortcuts (one-time, needed for events/tasks/search)
+# Set up helper shortcuts (one-time, needed for events/search)
 uv run fantastical setup
 
 # After setup — list today's events
@@ -52,10 +52,6 @@ uv run fantastical events upcoming
 
 # Search events by title
 uv run fantastical search "standup"
-
-# List tasks
-uv run fantastical tasks
-uv run fantastical tasks --overdue
 ```
 
 All commands support `--json` for machine-readable output:
@@ -66,7 +62,7 @@ uv run fantastical --json events today
 
 ## Setup
 
-Some features (events by date, search, tasks) use Fantastical's App Intents through Apple Shortcuts. Run the guided setup to create the required shortcuts:
+Some features (events by date, search) use Fantastical's App Intents through Apple Shortcuts. Run the guided setup to create the required shortcuts:
 
 ```bash
 uv run fantastical setup
@@ -82,12 +78,10 @@ This checks which helper shortcuts are installed and gives step-by-step instruct
 | Events by date   | Yes          |
 | Show schedule    | Yes          |
 | Search events    | Yes          |
-| List tasks       | Yes          |
-| Overdue tasks    | Yes          |
 
 ## MCP server
 
-To use fantastical-cli as an MCP server (e.g. with Claude Desktop), start it in stdio mode:
+To use fantastical-mcp as an MCP server (e.g. with Claude Desktop), start it in stdio mode:
 
 ```bash
 uv run fantastical serve
@@ -100,13 +94,13 @@ Or add it to your MCP client config:
   "mcpServers": {
     "fantastical": {
       "command": "uv",
-      "args": ["run", "--directory", "/path/to/fantastical-cli", "fantastical", "serve"]
+      "args": ["run", "--directory", "/path/to/fantastical-mcp", "fantastical", "serve"]
     }
   }
 }
 ```
 
-The server exposes these tools: `list_calendars`, `list_events`, `create_event`, `show_schedule`, `list_tasks`, `search_events`, `get_selected`.
+The server exposes these tools: `list_calendars`, `list_events`, `create_event`, `search_events`, `get_selected`.
 
 ## CLI reference
 
@@ -115,12 +109,10 @@ The server exposes these tools: `list_calendars`, `list_events`, `create_event`,
 | `calendars`              | List all Fantastical calendars           |
 | `selected`               | Show currently selected items            |
 | `add "..."`,             | Create event via natural language        |
-| `events`                 | List events (default: today)             |
+| `events list`            | List events in a date range (`--from`, `--to`) |
 | `events today`           | Today's events                           |
 | `events upcoming`        | Next 7 days (configurable with `--days`) |
 | `search <query>`         | Search events by title                   |
-| `tasks`                  | List tasks                               |
-| `show <id>`              | Open an event in Fantastical             |
 | `setup`                  | Create/verify helper shortcuts           |
 | `uninstall`              | Remove helper shortcuts                  |
 | `serve`                  | Start MCP server (stdio)                 |

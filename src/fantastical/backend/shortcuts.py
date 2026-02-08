@@ -7,31 +7,12 @@ import subprocess
 # Shortcut names used by this tool
 SHORTCUT_PREFIX = "Fantastical - "
 SHORTCUTS = {
-    "schedule": f"{SHORTCUT_PREFIX}Show Schedule",
-    "overdue": f"{SHORTCUT_PREFIX}Overdue Tasks",
+    "find_events": f"{SHORTCUT_PREFIX}Find Events",
 }
 
-# Instructions for creating each shortcut manually
-SHORTCUT_INSTRUCTIONS = {
-    "schedule": {
-        "name": SHORTCUTS["schedule"],
-        "steps": [
-            'Add action: "Show Schedule" (Fantastical)',
-            "Set date to Shortcut Input",
-            'Add action: Repeat with each item, format as text',
-        ],
-        "input": "A date (YYYY-MM-DD)",
-        "output": "One event per line: TITLE | START | END | CALENDAR | ALL_DAY | LOCATION | NOTES",
-    },
-    "overdue": {
-        "name": SHORTCUTS["overdue"],
-        "steps": [
-            'Add action: "Overdue Tasks" (Fantastical)',
-            'Add action: Repeat with each item, format as text',
-        ],
-        "input": "None",
-        "output": "One task per line: TITLE | DUE_DATE | LIST | NOTES",
-    },
+# Legacy shortcut names (for migration detection)
+LEGACY_SHORTCUTS = {
+    "schedule": f"{SHORTCUT_PREFIX}Show Schedule",
 }
 
 
@@ -75,7 +56,10 @@ def get_shortcut_ids_by_name(names: list[str]) -> dict[str, str]:
     """
     from fantastical.backend.jxa import run_jxa_json
 
-    names_js = "[" + ",".join(f'"{n}"' for n in names) + "]"
+    def _js_escape(s: str) -> str:
+        return s.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+
+    names_js = "[" + ",".join(f'"{_js_escape(n)}"' for n in names) + "]"
     script = f"""
     var app = Application("Shortcuts");
     var targetNames = {names_js};
@@ -105,7 +89,7 @@ def run_shortcut(key: str, input_text: str | None = None) -> str:
     """Run a Fantastical helper shortcut and return its text output.
 
     Args:
-        key: Shortcut key (e.g. 'schedule', 'overdue')
+        key: Shortcut key (e.g. 'schedule')
         input_text: Optional text input to pass to the shortcut
 
     Returns:
@@ -119,15 +103,13 @@ def run_shortcut(key: str, input_text: str | None = None) -> str:
         raise ValueError(f"Unknown shortcut key: {key}")
 
     cmd = ["shortcuts", "run", name]
-    stdin_data = None
-    if input_text:
+    if input_text:  # intentionally falsy — empty string means "no input"
         cmd.extend(["-i", input_text])
 
     result = subprocess.run(
         cmd,
         capture_output=True,
         text=True,
-        input=stdin_data,
         timeout=60,
     )
 
@@ -143,85 +125,71 @@ def run_shortcut(key: str, input_text: str | None = None) -> str:
     return result.stdout.strip()
 
 
+# Field names matching EVENT_PROPS order in shortcut_gen.py
+EVENT_FIELDS = ["title", "startDate", "endDate", "calendar", "isAllDay", "location", "notes", "fantasticalURL"]
+
+
+RECORD_SEPARATOR = "\x1e"
+
+
+def _parse_fields(parts: list[str]) -> dict:
+    """Parse a list of field values into an event dict."""
+    item: dict = {}
+    for i, name in enumerate(EVENT_FIELDS):
+        if i < len(parts):
+            val = parts[i].strip()
+            if name == "isAllDay":
+                item[name] = val.lower() in ("true", "yes", "1")
+            elif val in ("", "nil", "null", "(null)"):
+                item[name] = None
+            else:
+                item[name] = val
+        else:
+            item[name] = None
+    return item
+
+
 def parse_pipe_delimited(output: str) -> list[dict]:
-    """Parse pipe-delimited shortcut output into list of dicts.
+    """Parse pipe-delimited shortcut output into list of event dicts.
 
-    Expected format per line:
-    TITLE | START | END | CALENDAR | ALL_DAY | LOCATION | NOTES
+    Each record ends with ASCII Record Separator (0x1E), so fields can
+    safely contain newlines (e.g., multi-line locations, attendee lists).
+    Records are split on 0x1E first, then each record is split on pipe.
 
-    Handles varying numbers of fields gracefully.
+    Expected format per record (matching EVENT_PROPS in shortcut_gen.py):
+    TITLE | START | END | CALENDAR | ALL_DAY | LOCATION | NOTES | URL\x1e
     """
     if not output:
         return []
 
     results = []
-    field_names = ["title", "startDate", "endDate", "calendar", "isAllDay", "location", "notes"]
+    num_fields = len(EVENT_FIELDS)
 
-    for line in output.splitlines():
-        line = line.strip()
-        if not line:
+    for record in output.split(RECORD_SEPARATOR):
+        record = record.strip()
+        if not record:
             continue
 
-        parts = [p.strip() for p in line.split("|")]
-        item: dict = {}
-        for i, name in enumerate(field_names):
-            if i < len(parts):
-                val = parts[i]
-                if name == "isAllDay":
-                    item[name] = val.lower() in ("true", "yes", "1")
-                elif val in ("", "nil", "null", "(null)"):
-                    item[name] = None
-                else:
-                    item[name] = val
-            else:
-                item[name] = None
-        results.append(item)
+        parts = record.split("|", num_fields - 1)
+        results.append(_parse_fields(parts))
 
     return results
 
 
-def parse_task_output(output: str) -> list[dict]:
-    """Parse pipe-delimited task output into list of dicts.
+def get_events() -> list[dict]:
+    """Get all events in the shortcut's static date range via CalendarItemQuery.
 
-    Expected format per line:
-    TITLE | DUE_DATE | LIST | NOTES
+    Returns all events across ALL calendars. The caller is responsible
+    for filtering to the desired date range.
     """
-    if not output:
-        return []
-
-    results = []
-    field_names = ["title", "dueDate", "list", "notes"]
-
-    for line in output.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-
-        parts = [p.strip() for p in line.split("|")]
-        item: dict = {}
-        for i, name in enumerate(field_names):
-            if i < len(parts):
-                val = parts[i]
-                if val in ("", "nil", "null", "(null)"):
-                    item[name] = None
-                else:
-                    item[name] = val
-            else:
-                item[name] = None
-        results.append(item)
-
-    return results
-
-
-def get_schedule(date: str) -> list[dict]:
-    """Get schedule for a date via shortcuts."""
-    output = run_shortcut("schedule", date)
+    output = run_shortcut("find_events")
     return parse_pipe_delimited(output)
 
 
-def get_overdue_tasks() -> list[dict]:
-    """Get overdue tasks via shortcuts."""
-    output = run_shortcut("overdue")
-    return parse_task_output(output)
+def check_legacy_shortcuts() -> list[str]:
+    """Check for legacy shortcuts that can be removed.
 
-
+    Returns list of legacy shortcut names that are still installed.
+    """
+    installed = set(list_installed_shortcuts())
+    return [name for name in LEGACY_SHORTCUTS.values() if name in installed]

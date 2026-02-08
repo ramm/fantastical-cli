@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import subprocess
 from datetime import date, datetime, timedelta
 
 from fantastical.backend import fantastical as fan_backend
 from fantastical.backend import shortcuts
 from fantastical.backend.jxa import JXAError
-from fantastical.backend.shortcuts import ShortcutNotFoundError
+
+# Re-export for CLI/server use — keeps backend imports out of upper layers.
+SHORTCUTS = shortcuts.SHORTCUTS
+LEGACY_SHORTCUTS = shortcuts.LEGACY_SHORTCUTS
 
 
 class FantasticalError(Exception):
@@ -49,12 +53,14 @@ def _resolve_date(value: str) -> str:
         return lower
 
 
-def _run_shortcut_or_raise(fn, *args, **kwargs):
+def _run_shortcut_or_raise(shortcut_key: str, fn, *args, **kwargs):
     """Call a shortcuts backend function, converting ShortcutNotFoundError."""
+    from fantastical.backend.shortcuts import ShortcutNotFoundError
+
     try:
         return fn(*args, **kwargs)
     except ShortcutNotFoundError as e:
-        raise ShortcutsNotConfigured() from e
+        raise ShortcutsNotConfigured(shortcut_key) from e
 
 
 # --- Public API ---
@@ -87,30 +93,58 @@ def create_event(sentence: str, calendar: str | None = None, notes: str | None =
 
     No shortcuts required — uses URL scheme directly.
     """
-    return fan_backend.create_event(sentence, calendar, notes)
+    try:
+        return fan_backend.create_event(sentence, calendar, notes)
+    except (subprocess.SubprocessError, OSError) as e:
+        raise FantasticalError(f"Failed to create event: {e}") from e
+
+
+def _parse_event_date(date_str: str | None) -> date | None:
+    """Parse an event date string to a date object for filtering."""
+    if not date_str:
+        return None
+    try:
+        # Try ISO format first (2026-02-09T10:00:00+00:00 or 2026-02-09 10:00:00)
+        return datetime.fromisoformat(date_str.replace(" ", "T")).date()
+    except (ValueError, AttributeError):
+        try:
+            # Try date-only
+            return date.fromisoformat(date_str[:10])
+        except (ValueError, AttributeError):
+            return None
 
 
 def _get_events_for_range(from_iso: str, to_iso: str) -> list[dict]:
-    """Get events across a date range by calling the schedule shortcut per day.
+    """Get events across a date range using CalendarItemQuery.
 
-    Deduplicates multi-day events that appear on multiple days.
+    Single shortcut call returns all events in the broad static range;
+    Python-side filtering narrows to the requested [from_iso, to_iso].
+    Uses fantasticalURL as dedup key (unique per event instance).
     """
     start = date.fromisoformat(from_iso)
     end = date.fromisoformat(to_iso)
 
-    all_events: list[dict] = []
-    seen: set[tuple] = set()
-    current = start
-    while current <= end:
-        day_events = _run_shortcut_or_raise(shortcuts.get_schedule, current.isoformat())
-        for ev in day_events:
-            key = (ev.get("title"), ev.get("startDate"), ev.get("endDate"))
-            if key not in seen:
-                seen.add(key)
-                all_events.append(ev)
-        current += timedelta(days=1)
+    all_events = _run_shortcut_or_raise("find_events", shortcuts.get_events)
 
-    return all_events
+    # Filter to requested date range and deduplicate
+    filtered: list[dict] = []
+    seen: set[str] = set()
+    for ev in all_events:
+        # Deduplicate using fantasticalURL (unique per event instance)
+        url = ev.get("fantasticalURL")
+        if url and url in seen:
+            continue
+        if url:
+            seen.add(url)
+
+        # Filter by date range: event's start date must overlap [start, end]
+        ev_start = _parse_event_date(ev.get("startDate"))
+        if ev_start is not None and (ev_start < start or ev_start > end):
+            continue
+
+        filtered.append(ev)
+
+    return filtered
 
 
 def list_events(
@@ -121,15 +155,15 @@ def list_events(
     """List events in a date range.
 
     Requires shortcuts. Dates accept 'today', 'tomorrow', 'yesterday', or YYYY-MM-DD.
-    Uses the Show Schedule shortcut per day, capped at 31 days.
+    Uses CalendarItemQuery — single shortcut call, capped at 365 days.
     """
     resolved_from = _resolve_date(from_date)
     resolved_to = _resolve_date(to_date) if to_date else resolved_from
 
     start = date.fromisoformat(resolved_from)
     end = date.fromisoformat(resolved_to)
-    if (end - start).days > 30:
-        raise FantasticalError("Date range too large (max 31 days). Use a narrower range.")
+    if (end - start).days > 365:
+        raise FantasticalError("Date range too large (max 365 days). Use a narrower range.")
 
     events = _get_events_for_range(resolved_from, resolved_to)
 
@@ -140,42 +174,28 @@ def list_events(
     return events
 
 
+def search_events(query: str) -> list[dict]:
+    """Search events by title.
+
+    Requires shortcuts. Searches events within ±30 days of today
+    using CalendarItemQuery, then filters by title.
+    """
+    today_date = date.today()
+    from_iso = (today_date - timedelta(days=30)).isoformat()
+    to_iso = (today_date + timedelta(days=30)).isoformat()
+
+    events = _get_events_for_range(from_iso, to_iso)
+    query_lower = query.lower()
+    return [e for e in events if query_lower in (e.get("title") or "").lower()]
+
+
 def show_schedule(date_str: str = "today") -> list[dict]:
     """Show the schedule for a given date.
 
     Requires shortcuts.
     """
     resolved = _resolve_date(date_str)
-    return _run_shortcut_or_raise(shortcuts.get_schedule, resolved)
-
-
-def list_tasks(list_name: str | None = None, overdue: bool = False) -> list[dict]:
-    """List overdue tasks, optionally filtered by list name.
-
-    Requires shortcuts. Uses the Overdue Tasks action (the only task action
-    available in Shortcuts). The overdue flag is accepted for backward
-    compatibility but all returned tasks are overdue.
-    """
-    tasks = _run_shortcut_or_raise(shortcuts.get_overdue_tasks)
-    if list_name:
-        list_lower = list_name.lower()
-        tasks = [t for t in tasks if (t.get("list") or "").lower() == list_lower]
-    return tasks
-
-
-def search_events(query: str) -> list[dict]:
-    """Search events by title.
-
-    Requires shortcuts. Searches events within ±14 days of today
-    using the Show Schedule shortcut, then filters by title.
-    """
-    today_date = date.today()
-    from_iso = (today_date - timedelta(days=14)).isoformat()
-    to_iso = (today_date + timedelta(days=14)).isoformat()
-
-    events = _get_events_for_range(from_iso, to_iso)
-    query_lower = query.lower()
-    return [e for e in events if query_lower in (e.get("title") or "").lower()]
+    return _get_events_for_range(resolved, resolved)
 
 
 def check_setup() -> dict[str, bool]:
@@ -184,6 +204,23 @@ def check_setup() -> dict[str, bool]:
     Returns dict mapping shortcut key to installed status.
     """
     return shortcuts.check_all_shortcuts()
+
+
+def setup_shortcuts() -> dict[str, str]:
+    """Generate, sign, and import all required helper shortcuts.
+
+    Returns dict mapping shortcut key to the signed file path.
+
+    Raises RuntimeError if signing fails (e.g., no internet).
+    """
+    from fantastical.backend.shortcut_gen import generate_shortcut_file, import_shortcut, SHORTCUT_BUILDERS
+
+    results = {}
+    for key in SHORTCUT_BUILDERS:
+        path = generate_shortcut_file(key)
+        import_shortcut(path)
+        results[key] = str(path)
+    return results
 
 
 def get_installed_shortcut_ids() -> dict[str, str]:
