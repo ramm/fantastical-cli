@@ -9,9 +9,6 @@ from fantastical.backend import fantastical as fan_backend
 from fantastical.backend import shortcuts
 from fantastical.backend.jxa import JXAError
 
-# Re-export for CLI/server use — keeps backend imports out of upper layers.
-SHORTCUTS = shortcuts.SHORTCUTS
-LEGACY_SHORTCUTS = shortcuts.LEGACY_SHORTCUTS
 
 
 class FantasticalError(Exception):
@@ -199,6 +196,22 @@ def search_events(query: str) -> list[dict]:
 
     return _get_events_for_range(from_iso, to_iso, title_query=query)
 
+
+
+def get_shortcut_names() -> dict[str, str]:
+    """Get shortcut key → display name mapping.
+
+    Returns dict like {"find_events": "Fantastical - Find Events"}.
+    """
+    return dict(shortcuts.SHORTCUTS)
+
+
+def check_legacy_shortcuts() -> list[str]:
+    """Check for legacy shortcuts that are still installed.
+
+    Returns list of display names that should be removed.
+    """
+    return shortcuts.check_legacy_shortcuts()
 
 
 def check_setup() -> dict[str, bool]:

@@ -11,7 +11,7 @@ from datetime import date, timedelta
 import click
 
 from fantastical import api
-from fantastical.api import FantasticalError, ShortcutsNotConfigured, SHORTCUTS, LEGACY_SHORTCUTS
+from fantastical.api import FantasticalError, ShortcutsNotConfigured
 
 
 def _output(data, as_json: bool, format_fn):
@@ -199,9 +199,10 @@ def setup(force):
     click.secho("Fantastical CLI — Shortcut Setup", bold=True)
     click.echo()
 
+    shortcut_names = api.get_shortcut_names()
+
     # Check for legacy shortcuts that should be removed
-    from fantastical.backend.shortcuts import check_legacy_shortcuts
-    legacy = check_legacy_shortcuts()
+    legacy = api.check_legacy_shortcuts()
     if legacy:
         click.secho("Legacy shortcuts detected:", fg="yellow")
         for name in legacy:
@@ -216,14 +217,14 @@ def setup(force):
     if all_ok and not force:
         click.secho("All shortcuts are already installed!", fg="green")
         click.echo()
-        for key, name in SHORTCUTS.items():
+        for key, name in shortcut_names.items():
             click.echo(f"  [ok] {name}")
         click.echo()
         click.echo("Use --force to regenerate shortcuts after a CLI update.")
         return
 
     if force:
-        to_generate = list(SHORTCUTS.keys())
+        to_generate = list(shortcut_names.keys())
         click.echo(f"Will regenerate {len(to_generate)} shortcut(s):")
     else:
         to_generate = [k for k, ok in status.items() if not ok]
@@ -231,12 +232,12 @@ def setup(force):
         if installed:
             click.echo("Already installed:")
             for key in installed:
-                click.echo(f"  [ok] {SHORTCUTS[key]}")
+                click.echo(f"  [ok] {shortcut_names[key]}")
             click.echo()
         click.echo(f"Will create {len(to_generate)} shortcut(s):")
 
     for key in to_generate:
-        click.echo(f"  - {SHORTCUTS[key]}")
+        click.echo(f"  - {shortcut_names[key]}")
     click.echo()
 
     # Explain what will happen
@@ -265,7 +266,7 @@ def setup(force):
         from fantastical.backend.shortcut_gen import generate_shortcut_file, import_shortcut
 
         for key in to_generate:
-            name = SHORTCUTS[key]
+            name = shortcut_names[key]
             click.echo(f"  Signing {name}...", nl=False)
             path = generate_shortcut_file(key)
             click.secho(" done", fg="green")
@@ -298,13 +299,13 @@ def setup(force):
         for key, ok in status.items():
             icon = "[ok]" if ok else "[missing]"
             color = "green" if ok else "red"
-            click.secho(f"  {icon} {SHORTCUTS[key]}", fg=color)
+            click.secho(f"  {icon} {shortcut_names[key]}", fg=color)
         click.echo()
         click.echo("Try running `fantastical setup` again.")
         return
 
     click.echo()
-    for key, name in SHORTCUTS.items():
+    for key, name in shortcut_names.items():
         click.echo(f"  [ok] {name}")
     click.echo()
 
@@ -354,6 +355,7 @@ def uninstall():
     click.secho("Fantastical CLI — Uninstall Shortcuts", bold=True)
     click.echo()
 
+    shortcut_names = api.get_shortcut_names()
     status = api.check_setup()
     installed = {k: v for k, v in status.items() if v}
 
@@ -363,7 +365,7 @@ def uninstall():
 
     click.echo(f"Found {len(installed)} helper shortcut(s) to remove:")
     for key in installed:
-        click.echo(f"  - {SHORTCUTS[key]}")
+        click.echo(f"  - {shortcut_names[key]}")
     click.echo()
 
     # macOS Shortcuts has no programmatic delete — we open each shortcut

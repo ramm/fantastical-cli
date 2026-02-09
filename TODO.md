@@ -69,13 +69,9 @@ Title filter added to CalendarItemQuery (Operator 99, `title contains`). Both `l
 `pyproject.toml` names the package `fantastical-mcp`, suggesting a standalone MCP server. But the project is CLI-first: `cli.py` is 404 lines with interactive setup, `server.py` is a 43-line wrapper, README leads with CLI usage, entry point is `fantastical.cli:cli`. Consider renaming to `fantastical-cli` or just `fantastical` if available.
 
 
-## LAYER — Backend constants `SHORTCUTS`/`LEGACY_SHORTCUTS` leak through API to CLI
+## ~~LAYER — Backend constants `SHORTCUTS`/`LEGACY_SHORTCUTS` leak through API to CLI~~ ✓ RESOLVED
 
-**Priority:** P3
-
-`api.py:13-14` re-exports `SHORTCUTS` and `LEGACY_SHORTCUTS` dicts from `shortcuts.py`, and `cli.py:12` imports them directly. This means `cli.py` knows the backend's internal dict structure (keys like `"find_events"`, values like `"Fantastical - Find Events"`), violating the layer rule that cli.py should only depend on api.py's public interface.
-
-**Fix:** Replace the re-exported dicts with proper API functions, e.g. `api.get_shortcut_status()` returning `[{"key": "find_events", "name": "Fantastical - Find Events", "installed": True}]`. Remove `SHORTCUTS`/`LEGACY_SHORTCUTS` from api.py's public surface. Update `setup()` and `uninstall()` in cli.py to use the new API.
+Replaced re-exported dicts with `api.get_shortcut_names()` and `api.check_legacy_shortcuts()`. cli.py no longer imports backend constants.
 
 
 ## ~~ADD-OUTPUT — `add` command doesn't use `_output()` helper~~ ✓ RESOLVED
