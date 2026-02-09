@@ -113,6 +113,7 @@ Shortcuts are stored in a system database, NOT as individual files on disk. Ther
 
 ## Key conventions
 
+- **NEVER create, modify, or delete calendar events without explicit user consent.** The `add` command and `create_event` API write to the user's real calendar. Always confirm before calling them — especially from MCP tools or automated workflows.
 - All dates in the public API accept `"today"`, `"tomorrow"`, `"yesterday"`, or `YYYY-MM-DD` strings. Resolution happens in `api._resolve_date()`.
 - The `--json` flag is a top-level Click option, stored in `ctx.obj["json"]`.
 - When shortcuts are missing, raise `api.ShortcutsNotConfigured` — the CLI catches this and prints a helpful message pointing to `fantastical setup`.
