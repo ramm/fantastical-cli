@@ -2,77 +2,58 @@
 
 > **This file is for issues, problems, and action plans only.** Do not add development notes, workflow tips, reference material, or general documentation here — those belong in `AGENTS.md` or `docs/`.
 
-## P0: Migrate from FKRShowScheduleIntent to CalendarItemQuery
+## P0: CalendarItemQuery end-to-end pipeline
 
-**Status:** Code written, shortcut NOT working yet (2026-02-09)
+**Status:** WORKING (2026-02-09)
 
-### What's done
+### What works
 
-- `shortcut_gen.py`: `build_find_events()` generates a CalendarItemQuery shortcut with static date range, Repeat Each → pipe-delimited output. Uses native `datetime` objects for filter dates (string dates showed as empty "Date" placeholders — key discovery).
-- `shortcuts.py`: Updated to `find_events` key, `get_events()` function, legacy shortcut detection.
-- `api.py`: Rewritten `_get_events_for_range()` — single shortcut call, Python-side date filtering, `fantasticalURL` dedup.
-- `cli.py`: Setup detects legacy shortcuts, updated prompts.
-- `AGENTS.md`, `docs/cherri.md`: Updated.
+Full pipeline verified: `fantastical events today`, `fantastical --json events today`, `fantastical events list --from ... --to ...` all produce correct output.
 
-### What's NOT working
+- `shortcut_gen.py`: `build_find_events()` generates CalendarItemQuery with dynamic ±14 day range (Current Date → Adjust Date actions), Repeat Each → pipe-delimited text (title|start|end|cal|fantasticalURL), Text wrap → Output.
+- `shortcuts.py`: `get_events()`, `EVENT_FIELDS` = 5 fields: title, startDate, endDate, calendar, fantasticalURL.
+- `api.py`: `_get_events_for_range()` — single shortcut call, Python-side date filtering, calendar name enrichment via JXA. `_parse_event_date()` handles Shortcuts localized format ("12 Feb 2026 at 12:00"). `_get_calendar_map()` builds calendarIdentifier→name lookup. `--calendar` filter matches by name or ID.
 
-The generated shortcut fails at runtime with "There was a problem running the shortcut". The shortcut renders correctly in Shortcuts.app (dates show properly with native `datetime` plist values), but execution fails. A minimal CalendarItemQuery-only shortcut (no Repeat Each / Output) ran without error but produced no output — unclear if it actually queried anything.
+### Key discoveries (2026-02-09)
 
-### Next steps (can be done in parallel)
+1. **Dynamic dates in CalendarItemQuery filters ARE possible.** The shortcut uses Current Date → Adjust Date actions to compute ±14 days at runtime. Two critical discoveries: (a) `WFDuration` must use **string** values (`Magnitude: "14"`, `Unit: "days"`), not integers — integers silently break the output; (b) `WFWorkflowClientVersion: "4046.0.2.2"` must be in the top-level plist — without it, freshly-generated shortcuts with variable dates return 0 items. Found by extracting a working plist from Shortcuts.app (`_experiments/anything.shortcut`). Previous attempts A/B/F/G/H crashed or returned 0 items due to wrong WFDuration encoding or missing client version.
 
-**Route A: Cherri rawAction()** — Write a Cherri script using `rawAction("com.flexibits.fantastical2.mac.IntentCalendarItem", {...})` with the full nested filter dict. Compile with `--debug`, inspect the plist, import, test. If Cherri's plist serialization differs from our `plistlib.dump()` (key ordering, type coercion, internal wrapping), that's our bug. Fully automatable, no manual Shortcuts.app work needed.
+2. **Output action taint tracking.** Data from third-party apps (Fantastical) is "tainted" — the Output action refuses to emit it directly with `WFActionErrorDomain Code=4` and log message "produces private output and is not exempt from taint tracking, but is missing an appIdentifier". **Fix:** wrap Repeat Results in a Text action before Output. The intermediate Text action "launders" the data through a built-in action.
 
-**Route B: Manual shortcut extraction** — Create a working "Find Fantastical Calendar Item" shortcut manually in Shortcuts.app with a date filter + Repeat Each + output. Export, extract plist via AEA decryption, diff against our generated plist.
+3. **±90 days was too slow** (~700+ events, timed out). **±14 days** works well for typical calendars.
 
-**Fallback:** The old `FKRShowScheduleIntent` approach still works — consider reverting to it temporarily while debugging.
+4. **Date format from Shortcuts** is localized: "12 Feb 2026 at 12:00", NOT ISO. Parser handles this.
 
+5. **Pipe delimiter collision:** Event titles containing `|` (e.g., "Miro Engineering Council | Virtual Advisory Session") break the pipe-delimited parser. This is a known issue to fix later.
 
-## P1: CalendarItemQuery dynamic date range
+6. **Shortcut never goes stale.** Since dates are computed at runtime, `fantastical setup` only needs to run once. No periodic regeneration needed.
 
-**Status:** Needs research
+### What still needs doing
 
-### Problem
-
-CalendarItemQuery currently uses a hardcoded ±2.5 year static date range. This means:
-- Events beyond that range are invisible
-- The shortcut must be regenerated (re-run `fantastical setup`) to re-center the window
-- Unnecessary events are returned for narrow queries, increasing Shortcuts runtime
-
-### What we tried
-
-Investigated via Cherri compiler source analysis. Entity query filters use `Property`/`Operator`/`Values` (not `WFCondition`/`WFInput` like If conditions). The extracted plist had plain date strings in `Values.Date`/`Values.AnotherDate`. Whether these accept `WFTextTokenString` variable references is unknown.
-
-### How to fix
-
-1. Create a shortcut manually in Shortcuts.app where CalendarItemQuery's date filter is bound to a variable (Shortcut Input → Detect Dates → use in Find filter)
-2. Export and extract the plist to see if `Values.Date` becomes a WFTextTokenString
-3. If yes: update `_calendar_item_query_action()` to accept dynamic date variable references
-4. If no: explore workarounds (separate "Format Date" actions, relative date filters with `WFContentPredicateBoundedDate: true`, etc.)
+1. **Fix pipe delimiter collision** — titles with `|` break parsing. Use a different delimiter or escape it.
 
 
-## P1: Attendee email addresses
+## P1: Attendee data
 
-**Status:** Partially investigated, likely a Fantastical limitation
+**Status:** Root cause identified — `attendees` property crashes BackgroundShortcutRunner
 
-### Problem
+### Root cause (2026-02-09)
 
-The user wants attendee email addresses, not just display names.
-
-### What we tried
-
-1. **Nested Repeat Each** over `Repeat Item.attendees` → `displayString` and `email` were BOTH empty on the one event with attendees. Crashes on events without attendees (Repeat Each over nil).
-2. **If guard** (condition 100 "has any value") → format doesn't work on macOS 15+ (see P1 below)
-3. **Simple property access** (`Repeat Item.attendees`) → gives names only, no emails
+Accessing `Repeat Item.attendees` via `WFPropertyVariableAggrandizement` in a Text action crashes BackgroundShortcutRunner:
+```
+NSInvalidArgumentException: -[WFLinkEntityContentItem_com.flexibits.fantastical2.mac_IntentAttendee if_map:]: unrecognized selector
+```
+Stack trace: `WFPropertyVariableAggrandizement applyToContentCollection:` → `WFContentProperty getValuesForObject:`. The `IntentAttendee` entity objects don't support text coercion. This crash killed the entire shortcut run including all events that came before.
 
 ### Current state
 
-The shortcut currently omits the `attendees` field entirely to avoid crashes. `EVENT_PROPS` in `shortcut_gen.py` does NOT include `attendees`.
+`EVENT_PROPS` in `shortcut_gen.py` does NOT include `attendees`. The 8 safe properties work fine.
 
 ### Possible next steps
 
-- Try `FKRGetAttendeesFromEventIntent` — dedicated intent, might return richer data
+- **`FKRGetAttendeesFromEventIntent`** ("Get Invitees from Event" in Shortcuts.app UI) — dedicated intent that takes an event and returns attendees. Could be chained: Find Events → Repeat Each → Get Invitees → format. Needs its own plist structure discovery.
 - Test with events from different calendar types (Google vs iCloud) — emails may only be populated for some
-- Accept limitation: names only, no emails
+- Accept limitation: skip attendees entirely for now
 
 
 ## P1: If/Otherwise/End If action format on macOS 15+
@@ -97,11 +78,11 @@ Same reverse-engineering approach as CalendarItemQuery:
 4. Compare against our generated format
 
 
-## P2: Event deduplication key is fragile
+## P2: Event deduplication
 
-`api._get_events_for_range` deduplicates multi-day events using `(title, startDate, endDate, calendar)`. Recurring events with identical fields are incorrectly collapsed.
+**Status:** Not needed — "duplicates" are from a personal calendar + delegated room calendar, both legitimate.
 
-**Plan:** `fantasticalURL` is now included in `EVENT_PROPS` and `EVENT_FIELDS`, and `_get_events_for_range()` uses it as the dedup key — but this depends on the CalendarItemQuery shortcut working (P0). Untested.
+`fantasticalURL` was added to `EVENT_PROPS` as a permalink. It includes `calendarIdentifier` in the URL, so it's unique per calendar copy (not usable as a cross-calendar dedup key). Dedup on `(title, startDate, endDate)` was implemented and reverted — it would eat legitimate events from delegated calendars.
 
 
 ## P2: `create_event` is fire-and-forget
@@ -113,9 +94,7 @@ Same reverse-engineering approach as CalendarItemQuery:
 
 ## P2: Search performance
 
-Current `search_events` calls the schedule shortcut once per day across ±14 days (29 invocations). Code has been rewritten to use CalendarItemQuery with a single call and ±30 day range — but depends on CalendarItemQuery shortcut working (P0). Untested.
-
-Further optimization: could add a `title contains` filter directly in the CalendarItemQuery `WFContentItemFilter` to push filtering to Fantastical.
+`search_events` uses a single CalendarItemQuery call with ±30 day range, then filters by title in Python. Further optimization: could add a `title contains` filter directly in the CalendarItemQuery `WFContentItemFilter` to push filtering to Fantastical.
 
 
 ## P3: MCP server testing
@@ -128,8 +107,8 @@ The MCP server (`server.py`) wraps `api.py` but hasn't been tested end-to-end.
 No test suite. Testable pure-Python functions:
 - `api._resolve_date` — date resolution, validation
 - `shortcuts.parse_pipe_delimited` — field parsing, null handling, booleans
-- `api._get_events_for_range` — deduplication logic
-- `api.list_events` — date range cap, calendar filtering
+- `api._get_events_for_range` — date filtering, calendar enrichment
+- `api.list_events` — date range cap, calendar name filtering
 
 
 ## P3: Clean up test shortcuts
@@ -138,3 +117,5 @@ Delete from Shortcuts.app after development:
 - "Fantastical - Tomorrow Test"
 - "Test Find"
 - "Test Minimal", "Test No Attendees" (if still present)
+- "claude-test-v2" (latest working test shortcut)
+- Any other `claude-test-*` shortcuts

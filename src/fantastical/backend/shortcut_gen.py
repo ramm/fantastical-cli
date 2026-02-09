@@ -1,10 +1,12 @@
 """Generate and import .shortcut plist files for Fantastical App Intents.
 
-Key format discovery: App Intent parameters must use WFTextTokenString encoding
-(string + attachmentsByRange), NOT WFTextTokenAttachment. The date parameter
-specifically must reference the source action's output via OutputName + OutputUUID
-inside an attachmentsByRange dict. This was discovered by extracting the plist from
-a working signed shortcut where the user manually bound the variable in Shortcuts.app.
+Key format discoveries:
+- App Intent parameters must use WFTextTokenString encoding (string +
+  attachmentsByRange), NOT WFTextTokenAttachment.
+- Dynamic dates in CalendarItemQuery filters ARE possible using Adjust Date
+  actions with WFTextTokenAttachment refs in Values.Date/AnotherDate.
+  Critical: WFDuration must use STRING values (Magnitude="14", Unit="days"),
+  not integers. Discovered by extracting a working plist from Shortcuts.app.
 """
 
 from __future__ import annotations
@@ -13,7 +15,6 @@ import plistlib
 import subprocess
 import tempfile
 import uuid
-from datetime import date, datetime, timedelta
 from pathlib import Path
 
 # Fantastical app identifiers (from codesign -d --verbose=2)
@@ -281,6 +282,7 @@ def _build_shortcut_plist(name: str, actions: list[dict],
     plist = {
         "WFWorkflowMinimumClientVersionString": "900",
         "WFWorkflowMinimumClientVersion": 900,
+        "WFWorkflowClientVersion": "4046.0.2.2",
         "WFWorkflowIcon": {
             "WFWorkflowIconStartColor": 4282601983,
             "WFWorkflowIconGlyphNumber": 59511,
@@ -304,122 +306,241 @@ def _build_shortcut_plist(name: str, actions: list[dict],
 # --- Shortcut definitions ---
 
 # Event fields output by the shortcut (order matters — must match parser)
-EVENT_PROPS = ["title", "startDate", "endDate", "calendarIdentifier", "isAllDay", "location", "notes", "fantasticalURL"]
+EVENT_PROPS = ["title", "startDate", "endDate", "calendarIdentifier", "fantasticalURL"]
 
-# Static date range: ±2.5 years from generation time.
-# CalendarItemQuery filter dates must be hardcoded (dynamic WFTextTokenString
-# references in Values.Date/AnotherDate are not supported — confirmed via
-# Cherri compiler analysis; entity query filters use Property/Operator/Values,
-# not WFCondition/WFInput like If conditions). The shortcut is regenerated
-# during `fantastical setup` so the window re-centers on the current date.
-QUERY_RANGE_YEARS = 2.5
+# Dynamic date range: ±N days from current date at runtime.
+# The shortcut uses Current Date → Adjust Date actions to compute the range
+# dynamically, so it never goes stale. Python-side filtering narrows to
+# the exact requested range.
+QUERY_RANGE_DAYS = 14
 
 
-def _calendar_item_query_action(action_uuid: str, start_date: datetime, end_date: datetime) -> dict:
-    """Build a CalendarItemQuery action (Find Fantastical Calendar Item).
+def _current_date_action(action_uuid: str) -> dict:
+    """Build a Current Date action.
 
-    Uses WFContentItemFilter with a startDate "is between" filter.
-    Dates must be native datetime objects — plistlib encodes them as
-    NSDate values. String dates show as empty "Date" placeholders in
-    Shortcuts.app and cause runtime errors.
+    Note: do NOT include WFDateActionMode — the extracted working plist
+    from Shortcuts.app omits it, and including it may change behavior.
     """
     return {
-        "WFWorkflowActionIdentifier": f"{FANTASTICAL_BUNDLE_ID}.IntentCalendarItem",
+        "WFWorkflowActionIdentifier": "is.workflow.actions.date",
         "WFWorkflowActionParameters": {
-            "AppIntentDescriptor": {
-                "TeamIdentifier": FANTASTICAL_TEAM_ID,
-                "BundleIdentifier": FANTASTICAL_BUNDLE_ID,
-                "Name": FANTASTICAL_APP_NAME,
-                "AppIntentIdentifier": "IntentCalendarItem",
-                "ActionRequiresAppInstallation": True,
-            },
-            "WFContentItemFilter": {
-                "WFSerializationType": "WFContentPredicateTableTemplate",
-                "Value": {
-                    "WFActionParameterFilterPrefix": 1,
-                    "WFContentPredicateBoundedDate": False,
-                    "WFActionParameterFilterTemplates": [
-                        {
-                            "Operator": 1003,
-                            "Property": "startDate",
-                            "Removable": True,
-                            "Values": {
-                                "Unit": 4,
-                                "Date": start_date,
-                                "AnotherDate": end_date,
-                            },
-                        },
-                    ],
-                },
-            },
-            "ShowWhenRun": False,
             "UUID": action_uuid,
         },
     }
 
 
-def _query_date_range() -> tuple[datetime, datetime]:
-    """Compute the static date range for CalendarItemQuery.
+def _adjust_date_action(
+    action_uuid: str,
+    source_uuid: str,
+    source_output_name: str,
+    days: int,
+    operation: str = "Add",
+    custom_output_name: str | None = None,
+    coerce_source: bool = False,
+) -> dict:
+    """Build an Adjust Date action.
 
-    Returns (start, end) as datetime objects for plist serialization.
+    Args:
+        action_uuid: UUID for this action.
+        source_uuid: UUID of the action providing the date to adjust.
+        source_output_name: OutputName of the source action.
+        days: Number of days to adjust by.
+        operation: "Add" or "Subtract".
+        custom_output_name: Optional custom name for this action's output.
+        coerce_source: If True, add WFCoercionVariableAggrandizement to
+            coerce the source to WFDateContentItem.
     """
-    today = date.today()
-    offset = timedelta(days=int(QUERY_RANGE_YEARS * 365))
-    start = today - offset
-    end = today + offset
-    return (
-        datetime(start.year, start.month, start.day, 0, 0, 0),
-        datetime(end.year, end.month, end.day, 23, 59, 59),
-    )
+    attachment: dict = {
+        "OutputName": source_output_name,
+        "OutputUUID": source_uuid,
+        "Type": "ActionOutput",
+    }
+    if coerce_source:
+        attachment["Aggrandizements"] = [{
+            "CoercionItemClass": "WFDateContentItem",
+            "Type": "WFCoercionVariableAggrandizement",
+        }]
+
+    params: dict = {
+        "UUID": action_uuid,
+        "WFDate": {
+            "Value": {
+                "attachmentsByRange": {
+                    "{0, 1}": attachment,
+                },
+                "string": "\ufffc",
+            },
+            "WFSerializationType": "WFTextTokenString",
+        },
+        # CRITICAL: Magnitude and Unit must be STRINGS, not integers.
+        # Using integers silently breaks the Adjust Date action output.
+        "WFDuration": {
+            "Value": {
+                "Magnitude": str(days),
+                "Unit": "days",
+            },
+            "WFSerializationType": "WFQuantityFieldValue",
+        },
+    }
+    if operation != "Add":  # "Add" is the default when key is absent
+        params["WFAdjustOperation"] = operation
+    if custom_output_name:
+        params["CustomOutputName"] = custom_output_name
+    return {
+        "WFWorkflowActionIdentifier": "is.workflow.actions.adjustdate",
+        "WFWorkflowActionParameters": params,
+    }
+
+
+def _dynamic_date_query_actions(
+    query_uuid: str,
+    range_days: int,
+) -> tuple[list[dict], str, str]:
+    """Build Current Date → Adjust Date ×2 → CalendarItemQuery actions.
+
+    Returns (actions, start_uuid, end_uuid) where start/end UUIDs are
+    the Adjust Date action UUIDs for the date range boundaries.
+
+    The date range is ±range_days from the current date at runtime.
+    """
+    current_date_uuid = _uuid()
+    adjust_start_uuid = _uuid()
+    adjust_end_uuid = _uuid()
+
+    actions = [
+        # Current Date
+        _current_date_action(current_date_uuid),
+        # Subtract N days → start date
+        # CustomOutputName="Date" matches the encoding from Shortcuts.app
+        _adjust_date_action(
+            adjust_start_uuid, current_date_uuid, "Date",
+            days=range_days, operation="Subtract",
+            custom_output_name="Date",
+        ),
+        # Add N days → end date
+        # References Current Date directly, coercion matches extracted plist
+        _adjust_date_action(
+            adjust_end_uuid, current_date_uuid, "Date",
+            days=range_days, operation="Add",
+        ),
+        # CalendarItemQuery with dynamic date filter
+        {
+            "WFWorkflowActionIdentifier": f"{FANTASTICAL_BUNDLE_ID}.IntentCalendarItem",
+            "WFWorkflowActionParameters": {
+                "AppIntentDescriptor": {
+                    "TeamIdentifier": FANTASTICAL_TEAM_ID,
+                    "BundleIdentifier": FANTASTICAL_BUNDLE_ID,
+                    "Name": FANTASTICAL_APP_NAME,
+                    "AppIntentIdentifier": "IntentCalendarItem",
+                    "ActionRequiresAppInstallation": True,
+                },
+                "UUID": query_uuid,
+                "WFContentItemFilter": {
+                    "WFSerializationType": "WFContentPredicateTableTemplate",
+                    "Value": {
+                        "WFActionParameterFilterPrefix": 1,
+                        "WFContentPredicateBoundedDate": False,
+                        "WFActionParameterFilterTemplates": [
+                            {
+                                "Operator": 1003,
+                                "Property": "startDate",
+                                "Removable": True,
+                                "Values": {
+                                    "Unit": 4,
+                                    # WFTextTokenAttachment refs — no aggrandizements
+                                    "Date": _var_attachment(
+                                        var_type="ActionOutput",
+                                        output_uuid=adjust_start_uuid,
+                                        output_name="Date",
+                                    ),
+                                    "AnotherDate": _var_attachment(
+                                        var_type="ActionOutput",
+                                        output_uuid=adjust_end_uuid,
+                                        output_name="Adjusted Date",
+                                    ),
+                                },
+                            },
+                        ],
+                    },
+                },
+            },
+        },
+    ]
+    return actions, adjust_start_uuid, adjust_end_uuid
+
+
+def _repeat_text_output_actions(query_uuid: str, prop_names: list[str]) -> list[dict]:
+    """Build Repeat Each → Text → Text wrap → Output pipeline.
+
+    Takes CalendarItemQuery results and formats them as pipe-delimited
+    text with record separators.
+
+    The extra Text action wrapping Repeat Results before Output is required
+    to bypass macOS taint tracking. Data from third-party apps (Fantastical)
+    is "tainted" and the Output action refuses to emit it directly
+    ("produces private output... missing an appIdentifier"). Passing through
+    a Text action first makes the data owned by the Shortcuts engine.
+    """
+    group_uuid = _uuid()
+    repeat_output_uuid = _uuid()
+    text_wrap_uuid = _uuid()
+    event_text = _pipe_delimited_text(prop_names)
+
+    return [
+        # Repeat Each (over calendar items)
+        _repeat_each_start(
+            _var_attachment(var_type="ActionOutput", output_uuid=query_uuid,
+                           output_name="Fantastical Calendar Item"),
+            group_uuid,
+        ),
+        # Format event as pipe-delimited text
+        _text_action(event_text),
+        # End repeat
+        _repeat_each_end(group_uuid, repeat_output_uuid),
+        # Wrap repeat results in Text action (bypasses taint tracking)
+        {
+            "WFWorkflowActionIdentifier": "is.workflow.actions.gettext",
+            "WFWorkflowActionParameters": {
+                "WFTextActionText": _token_string_param(
+                    output_uuid=repeat_output_uuid,
+                    output_name="Repeat Results",
+                ),
+                "UUID": text_wrap_uuid,
+            },
+        },
+        # Output the Text result (not the raw Repeat Results)
+        _output_action(_token_string_param(
+            output_uuid=text_wrap_uuid,
+            output_name="Text",
+        )),
+    ]
 
 
 def build_find_events() -> dict:
     """Build the 'Fantastical - Find Events' shortcut plist.
 
     Uses CalendarItemQuery to find events across ALL calendars within
-    a broad static date range. Python-side filtering narrows to the
-    exact requested dates.
+    a dynamic ±14 day range from the current date at runtime.
+
+    The date range is computed at RUNTIME using Current Date → Adjust Date
+    actions, so the shortcut never goes stale. Python-side filtering
+    narrows to the exact requested dates. The shortcut only needs to be
+    generated once during `fantastical setup`.
 
     Flow:
-      CalendarItemQuery(startDate between start..end)
-      -> Repeat Each (events):
-           -> Text: title | start | end | cal | allDay | loc | notes | url\x1e
-      -> End Repeat -> Output
+      Current Date → Adjust Date (−14d) → Adjust Date (+14d)
+        → CalendarItemQuery(startDate between start..end)
+        → Repeat Each → pipe-delimited text
+        → Text wrap (bypasses taint tracking)
+        → Output
     """
-    action_uuid = _uuid()
-    group_uuid = _uuid()
-    repeat_output_uuid = _uuid()
-
-    start_date, end_date = _query_date_range()
-    event_text = _pipe_delimited_text(EVENT_PROPS)
+    query_uuid = _uuid()
+    date_actions, _, _ = _dynamic_date_query_actions(query_uuid, QUERY_RANGE_DAYS)
 
     actions = [
-        # 1. Find calendar items in date range (all calendars)
-        _calendar_item_query_action(action_uuid, start_date, end_date),
-        # 2. Repeat Each (over calendar items)
-        _repeat_each_start(
-            _var_attachment(var_type="ActionOutput", output_uuid=action_uuid,
-                           output_name="Fantastical Calendar Item"),
-            group_uuid,
-        ),
-        # 3. Format event as pipe-delimited text
-        _text_action(event_text),
-        # 4. End repeat
-        _repeat_each_end(group_uuid, repeat_output_uuid),
-        # 5. Output the results
-        _output_action({
-            "WFSerializationType": "WFTextTokenString",
-            "Value": {
-                "string": "\ufffc",
-                "attachmentsByRange": {
-                    "{0, 1}": {
-                        "OutputUUID": repeat_output_uuid,
-                        "Type": "ActionOutput",
-                        "OutputName": "Repeat Results",
-                    },
-                },
-            },
-        }),
+        *date_actions,
+        # Repeat → Text → End Repeat → Text wrap → Output
+        *_repeat_text_output_actions(query_uuid, EVENT_PROPS),
     ]
     return _build_shortcut_plist("Fantastical - Find Events", actions, accepts_input=False)
 

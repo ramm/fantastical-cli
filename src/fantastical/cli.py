@@ -51,7 +51,7 @@ def _format_events(events: list[dict]):
         title = ev.get("title", "(no title)")
         start = ev.get("startDate", "")
         end = ev.get("endDate", "")
-        cal = ev.get("calendar", "")
+        cal = ev.get("calendarName") or ev.get("calendar", "")
         all_day = ev.get("isAllDay", False)
         location = ev.get("location")
 
@@ -75,31 +75,6 @@ def _format_events(events: list[dict]):
 
 
 
-def _format_selected(items: list[dict]):
-    if not items:
-        click.echo("No items selected in Fantastical.")
-        return
-    for item in items:
-        title = item.get("title", "(no title)")
-        start = item.get("startDate", "")
-        end = item.get("endDate", "")
-        all_day = item.get("isAllDay", False)
-        notes = item.get("notes")
-        location = item.get("location")
-
-        click.secho(f"  {title}", bold=True)
-        if all_day:
-            click.echo("    All day")
-        elif start:
-            time_line = f"    {start}"
-            if end:
-                time_line += f" - {end}"
-            click.echo(time_line)
-        if location:
-            click.echo(f"    Location: {location}")
-        if notes:
-            click.echo(f"    Notes: {notes}")
-
 
 @click.group()
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON.")
@@ -120,16 +95,6 @@ def calendars(ctx):
     except Exception as e:
         _handle_error(e)
 
-
-@cli.command()
-@click.pass_context
-def selected(ctx):
-    """Show currently selected items in Fantastical."""
-    try:
-        data = api.get_selected()
-        _output(data, ctx.obj["json"], _format_selected)
-    except Exception as e:
-        _handle_error(e)
 
 
 @cli.group()
@@ -219,11 +184,15 @@ def add(ctx, sentence, calendar, notes):
 
 
 @cli.command()
-def setup():
-    """Create or verify helper shortcuts for Fantastical integration.
+@click.option("--force", is_flag=True, help="Regenerate shortcuts even if already installed.")
+def setup(force):
+    """Create or update helper shortcuts for Fantastical integration.
 
     Generates, signs, and imports Apple Shortcuts that bridge
     Fantastical's App Intents to the command line.
+
+    Use --force to regenerate shortcuts after a CLI update (e.g., when
+    new event fields are added to the shortcut output).
     """
     click.secho("Fantastical CLI — Shortcut Setup", bold=True)
     click.echo()
@@ -242,24 +211,29 @@ def setup():
     status = api.check_setup()
     all_ok = all(status.values())
 
-    if all_ok:
+    if all_ok and not force:
         click.secho("All shortcuts are already installed!", fg="green")
         click.echo()
         for key, name in SHORTCUTS.items():
             click.echo(f"  [ok] {name}")
+        click.echo()
+        click.echo("Use --force to regenerate shortcuts after a CLI update.")
         return
 
-    missing = [k for k, ok in status.items() if not ok]
-    installed = [k for k, ok in status.items() if ok]
+    if force:
+        to_generate = list(SHORTCUTS.keys())
+        click.echo(f"Will regenerate {len(to_generate)} shortcut(s):")
+    else:
+        to_generate = [k for k, ok in status.items() if not ok]
+        installed = [k for k, ok in status.items() if ok]
+        if installed:
+            click.echo("Already installed:")
+            for key in installed:
+                click.echo(f"  [ok] {SHORTCUTS[key]}")
+            click.echo()
+        click.echo(f"Will create {len(to_generate)} shortcut(s):")
 
-    if installed:
-        click.echo("Already installed:")
-        for key in installed:
-            click.echo(f"  [ok] {SHORTCUTS[key]}")
-        click.echo()
-
-    click.echo(f"Will create {len(missing)} shortcut(s):")
-    for key in missing:
+    for key in to_generate:
         click.echo(f"  - {SHORTCUTS[key]}")
     click.echo()
 
@@ -267,7 +241,10 @@ def setup():
     click.secho("What to expect:", bold=True)
     click.echo("  1. Shortcut files will be generated and signed (requires internet)")
     click.echo("  2. Shortcuts.app will open an import dialog for each shortcut")
-    click.echo('     -> Click "Add Shortcut" to accept each one')
+    if force:
+        click.echo('     -> Click "Replace Shortcut" to update each one')
+    else:
+        click.echo('     -> Click "Add Shortcut" to accept each one')
     click.echo("  3. On first use, Fantastical will show a privacy prompt:")
     click.echo('     "Allow ... to share 1 text item with Fantastical?"')
     click.echo('     -> Click "Always Allow"')
@@ -283,9 +260,9 @@ def setup():
         click.echo("Generating and signing shortcuts...")
         click.echo("  (contacting Apple servers for signing — requires internet)")
         click.echo()
-        from fantastical.backend.shortcut_gen import generate_shortcut_file, import_shortcut, SHORTCUT_BUILDERS
+        from fantastical.backend.shortcut_gen import generate_shortcut_file, import_shortcut
 
-        for key in missing:
+        for key in to_generate:
             name = SHORTCUTS[key]
             click.echo(f"  Signing {name}...", nl=False)
             path = generate_shortcut_file(key)
@@ -294,7 +271,10 @@ def setup():
             click.echo(f"  Importing {name}...")
             import_shortcut(path)
             click.echo()
-            click.secho(f'  -> Shortcuts.app: click "Add Shortcut" to accept.', bold=True)
+            if force:
+                click.secho(f'  -> Shortcuts.app: click "Replace Shortcut" to update.', bold=True)
+            else:
+                click.secho(f'  -> Shortcuts.app: click "Add Shortcut" to accept.', bold=True)
 
             # Wait for the user to confirm they accepted
             click.pause("  Press any key after accepting the shortcut...")
@@ -329,13 +309,14 @@ def setup():
     # Test the shortcut to trigger privacy grant
     click.secho("Testing shortcut with today's events...", bold=True)
     click.echo()
-    click.echo("  macOS will show a privacy dialog:")
-    click.echo('    "Allow ... to interact with Fantastical?"')
-    click.echo()
-    click.secho('  IMPORTANT: Click "Always Allow" (not "Allow Once")', bold=True)
-    click.echo('  "Allow Once" will require approval on every single run.')
-    click.echo()
-    click.pause("  Press any key to run the test...")
+    if not force:
+        click.echo("  macOS will show a privacy dialog:")
+        click.echo('    "Allow ... to interact with Fantastical?"')
+        click.echo()
+        click.secho('  IMPORTANT: Click "Always Allow" (not "Allow Once")', bold=True)
+        click.echo('  "Allow Once" will require approval on every single run.')
+        click.echo()
+        click.pause("  Press any key to run the test...")
 
     try:
         events = api.show_schedule("today")

@@ -126,7 +126,7 @@ def run_shortcut(key: str, input_text: str | None = None) -> str:
 
 
 # Field names matching EVENT_PROPS order in shortcut_gen.py
-EVENT_FIELDS = ["title", "startDate", "endDate", "calendar", "isAllDay", "location", "notes", "fantasticalURL"]
+EVENT_FIELDS = ["title", "startDate", "endDate", "calendar", "fantasticalURL"]
 
 
 RECORD_SEPARATOR = "\x1e"
@@ -138,9 +138,7 @@ def _parse_fields(parts: list[str]) -> dict:
     for i, name in enumerate(EVENT_FIELDS):
         if i < len(parts):
             val = parts[i].strip()
-            if name == "isAllDay":
-                item[name] = val.lower() in ("true", "yes", "1")
-            elif val in ("", "nil", "null", "(null)"):
+            if val in ("", "nil", "null", "(null)"):
                 item[name] = None
             else:
                 item[name] = val
@@ -157,7 +155,7 @@ def parse_pipe_delimited(output: str) -> list[dict]:
     Records are split on 0x1E first, then each record is split on pipe.
 
     Expected format per record (matching EVENT_PROPS in shortcut_gen.py):
-    TITLE | START | END | CALENDAR | ALL_DAY | LOCATION | NOTES | URL\x1e
+    TITLE | START | END | CALENDAR\x1e
     """
     if not output:
         return []
@@ -179,7 +177,8 @@ def parse_pipe_delimited(output: str) -> list[dict]:
 def get_events() -> list[dict]:
     """Get all events in the shortcut's static date range via CalendarItemQuery.
 
-    Returns all events across ALL calendars. The caller is responsible
+    Returns all events across ALL calendars within the ±90 day range
+    hardcoded during shortcut generation. The caller is responsible
     for filtering to the desired date range.
     """
     output = run_shortcut("find_events")

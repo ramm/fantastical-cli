@@ -77,16 +77,6 @@ def list_calendars() -> list[dict]:
         raise FantasticalError(f"Failed to list calendars: {e}") from e
 
 
-def get_selected() -> list[dict]:
-    """Get currently selected calendar items in Fantastical.
-
-    No shortcuts required — uses JXA directly.
-    """
-    try:
-        return fan_backend.get_selected_items()
-    except JXAError as e:
-        raise FantasticalError(f"Failed to get selected items: {e}") from e
-
 
 def create_event(sentence: str, calendar: str | None = None, notes: str | None = None) -> dict:
     """Create an event using natural language parsing.
@@ -100,48 +90,66 @@ def create_event(sentence: str, calendar: str | None = None, notes: str | None =
 
 
 def _parse_event_date(date_str: str | None) -> date | None:
-    """Parse an event date string to a date object for filtering."""
+    """Parse an event date string to a date object for filtering.
+
+    Handles multiple formats from Shortcuts output:
+    - "12 Feb 2026 at 12:00" (macOS Shortcuts localized format)
+    - "2026-02-09T10:00:00+00:00" (ISO format)
+    - "2026-02-09" (date-only ISO)
+    """
     if not date_str:
         return None
     try:
-        # Try ISO format first (2026-02-09T10:00:00+00:00 or 2026-02-09 10:00:00)
+        # Try Shortcuts localized format: "12 Feb 2026 at 12:00"
+        cleaned = date_str.replace(" at ", " ")
+        return datetime.strptime(cleaned, "%d %b %Y %H:%M").date()
+    except (ValueError, AttributeError):
+        pass
+    try:
+        # Try ISO format (2026-02-09T10:00:00+00:00 or 2026-02-09 10:00:00)
         return datetime.fromisoformat(date_str.replace(" ", "T")).date()
     except (ValueError, AttributeError):
-        try:
-            # Try date-only
-            return date.fromisoformat(date_str[:10])
-        except (ValueError, AttributeError):
-            return None
+        pass
+    try:
+        # Try date-only
+        return date.fromisoformat(date_str[:10])
+    except (ValueError, AttributeError):
+        return None
+
+
+def _get_calendar_map() -> dict[str, str]:
+    """Build calendarIdentifier → calendar name map via JXA.
+
+    Returns empty dict if JXA fails (e.g., Fantastical not responding).
+    """
+    try:
+        cals = fan_backend.list_calendars()
+        return {c["id"]: c["title"] for c in cals if "id" in c and "title" in c}
+    except (JXAError, Exception):
+        return {}
 
 
 def _get_events_for_range(from_iso: str, to_iso: str) -> list[dict]:
     """Get events across a date range using CalendarItemQuery.
 
-    Single shortcut call returns all events in the broad static range;
+    Single shortcut call returns all events in the ±14 day dynamic range;
     Python-side filtering narrows to the requested [from_iso, to_iso].
-    Uses fantasticalURL as dedup key (unique per event instance).
+    Events are enriched with calendarName from JXA when available.
     """
     start = date.fromisoformat(from_iso)
     end = date.fromisoformat(to_iso)
 
     all_events = _run_shortcut_or_raise("find_events", shortcuts.get_events)
+    cal_map = _get_calendar_map()
 
-    # Filter to requested date range and deduplicate
+    # Filter to requested date range, enrich with calendar name
     filtered: list[dict] = []
-    seen: set[str] = set()
     for ev in all_events:
-        # Deduplicate using fantasticalURL (unique per event instance)
-        url = ev.get("fantasticalURL")
-        if url and url in seen:
-            continue
-        if url:
-            seen.add(url)
-
-        # Filter by date range: event's start date must overlap [start, end]
         ev_start = _parse_event_date(ev.get("startDate"))
         if ev_start is not None and (ev_start < start or ev_start > end):
             continue
-
+        if cal_map:
+            ev["calendarName"] = cal_map.get(ev.get("calendar"), None)
         filtered.append(ev)
 
     return filtered
@@ -169,7 +177,9 @@ def list_events(
 
     if calendar:
         cal_lower = calendar.lower()
-        events = [e for e in events if e.get("calendar", "").lower() == cal_lower]
+        events = [e for e in events
+                  if cal_lower in ((e.get("calendarName") or "").lower(),
+                                   (e.get("calendar") or "").lower())]
 
     return events
 

@@ -40,8 +40,3 @@ async def search_events(query: str) -> str:
     return json.dumps(data)
 
 
-@mcp.tool()
-async def get_selected() -> str:
-    """Get currently selected calendar items in Fantastical."""
-    data = await asyncio.to_thread(api.get_selected)
-    return json.dumps(data)

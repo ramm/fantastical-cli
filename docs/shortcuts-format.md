@@ -66,6 +66,7 @@ A `.shortcut` file is a binary plist (`bplist00`) with these top-level keys:
 {
   "WFWorkflowMinimumClientVersionString": "900",
   "WFWorkflowMinimumClientVersion": 900,
+  "WFWorkflowClientVersion": "4046.0.2.2",
   "WFWorkflowIcon": {
     "WFWorkflowIconStartColor": 4282601983,
     "WFWorkflowIconGlyphNumber": 59511
@@ -450,10 +451,55 @@ From the CalendarItemQuery metadata and shortcut extraction:
 
 For the "is between" operator (`1003`), `Values` contains:
 - `Unit: 4` — meaning unclear, possibly "day" granularity
-- `Date` — start of range, format `"YYYY-MM-DD HH:MM:SS.ffffff"`
-- `AnotherDate` — end of range, same format
+- `Date` — start of range (WFTextTokenAttachment or static datetime)
+- `AnotherDate` — end of range (same)
 
-**TODO:** Test whether simpler date formats work (e.g., `"2026-02-09"` without time component), and whether the `Date`/`AnotherDate` values can be dynamic (WFTextTokenString with variable references) rather than static strings.
+**Dynamic dates ARE possible** using Adjust Date action outputs referenced via `WFTextTokenAttachment`:
+```json
+"Date": {
+  "WFSerializationType": "WFTextTokenAttachment",
+  "Value": {
+    "Type": "ActionOutput",
+    "OutputUUID": "adjust-date-subtract-uuid",
+    "OutputName": "Date"
+  }
+}
+```
+
+**Critical requirement:** The Adjust Date actions feeding these filter values must use **string** values for `WFDuration`:
+```json
+"WFDuration": {
+  "WFSerializationType": "WFQuantityFieldValue",
+  "Value": {
+    "Magnitude": "14",
+    "Unit": "days"
+  }
+}
+```
+Using integers (`Magnitude: 14`, `Unit: 4`) silently breaks the Adjust Date output, causing CalendarItemQuery to return 0 items without crashing.
+
+Static `datetime` plist objects also work (the original approach), but dynamic dates are preferred since the shortcut never goes stale.
+
+**`WFWorkflowClientVersion` is required for dynamic variables in entity query filters.** Without `"WFWorkflowClientVersion": "4046.0.2.2"` in the top-level plist, freshly-generated shortcuts with variable references in CalendarItemQuery `Values.Date`/`Values.AnotherDate` silently return 0 items — even when the encoding is structurally identical to a working shortcut. The Shortcuts engine apparently uses this key to decide whether to resolve variable references in filter predicates. Shortcuts exported from Shortcuts.app always include this key; programmatically-generated plists must add it explicitly.
+
+**History:** Initial attempts (A/B in `_experiments/12_dynamic_dates.py`) crashed because they used Detect Dates output (not Adjust Date) and had no proper date source. Attempts F/G/H (`_experiments/13_dynamic_dates_v2.py`) used Adjust Date but with integer WFDuration values, causing silent failures. v3–v5 (`_experiments/14–16_*.py`) had correct encoding but returned 0 items due to missing `WFWorkflowClientVersion`. v6 (`_experiments/17_anything_plus_output.py`) confirmed the fix by reusing the original plist (with the key) and appending output actions — it returned events. The correct encoding was discovered by extracting a working plist from Shortcuts.app UI (`_experiments/anything.shortcut`).
+
+### Output action taint tracking
+
+Data from third-party App Intent actions (like Fantastical's CalendarItemQuery) is marked as "tainted" by macOS. The Output action refuses to emit tainted data directly:
+
+```
+Action <private> produces private output and is not exempt from taint tracking, but is missing an appIdentifier
+Error Domain=WFActionErrorDomain Code=4
+```
+
+**Fix:** Insert a Text action between the Repeat Results and the Output action. The Text action wraps the data, and its output is owned by the Shortcuts engine (not the third-party app), bypassing the taint tracking:
+
+```
+Repeat Results → Text(Repeat Results) → Output(Text)
+```
+
+This is required for all shortcuts that output data from third-party App Intent actions via `shortcuts run`.
 
 ### Output name
 
@@ -492,6 +538,7 @@ To discover new plist formats for actions not yet supported by our generator:
 This approach was used to discover:
 - The WFTextTokenString encoding for App Intent parameters (vs WFTextTokenAttachment)
 - The WFContentPredicateTableTemplate format for CalendarItemQuery filters
+- The WFDuration string encoding and WFWorkflowClientVersion requirement for dynamic dates
 
 ## Conditional actions (If/Otherwise/End If)
 
@@ -551,20 +598,122 @@ On modern macOS, the If action uses `WFConditions` with `WFContentPredicateTable
 
 **Status:** Not yet validated. Our attempt to use condition 100 ("has any value") to guard a nested Repeat Each over nil attendees produced "Please choose a value for each parameter" error with the flat format, and still crashed with the WFContentPredicateTableTemplate format. The exact working format may need to be discovered by having the user create an If shortcut manually (same reverse-engineering approach as CalendarItemQuery).
 
+## Debugging with macOS unified logs
+
+Shortcuts execute in the `BackgroundShortcutRunner` process. Use `/usr/bin/log` (full path required — zsh has a builtin `log` function that shadows it) to capture diagnostic output.
+
+### Capturing logs during a shortcut run
+
+```bash
+# Start log capture in background BEFORE running the shortcut
+/usr/bin/log stream --predicate 'process == "BackgroundShortcutRunner" OR process == "Fantastical" OR process CONTAINS "hortcut"' --style compact > /tmp/sc_log.txt 2>&1 &
+LOG_PID=$!
+
+# Run the shortcut
+shortcuts run "My Shortcut" > /tmp/sc_output.txt 2>&1 &
+SC_PID=$!
+
+# Wait for completion (with timeout)
+for i in $(seq 1 120); do
+  kill -0 $SC_PID 2>/dev/null || break
+  sleep 1
+done
+
+# Clean up
+kill $LOG_PID 2>/dev/null
+kill $SC_PID 2>/dev/null  # if still running (timeout)
+```
+
+### Viewing past logs (no streaming needed)
+
+```bash
+# Last 5 minutes of BackgroundShortcutRunner logs
+/usr/bin/log show --last 5m --predicate 'process == "BackgroundShortcutRunner"' --style compact
+
+# Include Fantastical and Shortcuts processes
+/usr/bin/log show --last 5m --predicate 'process == "BackgroundShortcutRunner" OR process == "Fantastical" OR process CONTAINS "hortcut"' --style compact
+```
+
+### Key log subsystems
+
+| Subsystem | What it shows |
+|-----------|--------------|
+| `com.apple.shortcuts:RunningLifecycle` | Action start/finish, output item counts |
+| `com.apple.shortcuts:WorkflowExecution` | Parameter processing, action start/finish with details |
+| `com.apple.shortcuts:Dialog` | Smart prompt / privacy dialog responses |
+| `com.apple.shortcuts:Security` | Smart prompt presentation, privacy decisions |
+| `com.apple.shortcuts:AppIntentsMetadata` | Metadata loading for third-party actions |
+| `com.apple.shortcuts:Interchange` | App definition loading |
+| `com.apple.appintents:Connection` | XPC connection to Fantastical for query execution |
+
+### Common log patterns
+
+**Successful query execution:**
+```
+Action <WFLinkContentItemFilterAction: ...IntentCalendarItem...> finished with output of 99 items
+```
+
+**Smart prompt shown (expected — user must accept):**
+```
+Action com.flexibits.fantastical2.mac.IntentCalendarItem is presenting a smart prompt, but it does not have a custom smart prompt string.
+```
+
+**Metadata warnings (benign — execution continues):**
+```
+Metadata not found for com.flexibits.fantastical2.mac:IntentCalendarItem
+Failed to load a definition for com.flexibits.fantastical2.mac
+```
+These appear on every run but don't prevent the action from working.
+
+**Property aggrandizement crash (attendees):**
+```
+*** Terminating app due to uncaught exception 'NSInvalidArgumentException',
+reason: '-[WFLinkEntityContentItem_com.flexibits.fantastical2.mac_IntentAttendee if_map:]:
+unrecognized selector sent to instance ...'
+```
+This crash occurs when accessing the `attendees` property via `WFPropertyVariableAggrandizement` in a Text action. The `IntentAttendee` entity objects cannot be coerced to text. Use "Get Invitees from Event" action instead.
+
+### Known property safety
+
+Properties tested via `WFPropertyVariableAggrandizement` on `IntentCalendarItem`:
+
+| Property | Status | Notes |
+|----------|--------|-------|
+| `title` | Works | |
+| `startDate` | Works | |
+| `endDate` | Works | |
+| `calendarIdentifier` | Works | |
+| `isAllDay` | Works | |
+| `location` | Works | |
+| `notes` | Works | |
+| `fantasticalURL` | Works | |
+| `attendees` | **CRASHES** | `IntentAttendee` objects don't support `if_map:` for text coercion |
+| `url` | Untested | |
+| `hexColorString` | Untested | |
+| `availability` | Untested | |
+| `conferences` | Untested | |
+
 ## Output parsing
 
-Shortcuts pipe output to stdout as plain text. Our shortcuts format output as pipe-delimited lines:
+Shortcuts pipe output to stdout as plain text. Our shortcuts format output as pipe-delimited records separated by ASCII Record Separator (0x1E):
 
 ```
-Meeting with Bob | 2026-02-08T10:00:00 | 2026-02-08T11:00:00 | Work | false | Conference Room | Discuss Q1 plans
-Lunch | 2026-02-08T12:00:00 | 2026-02-08T13:00:00 | Personal | false | (null) | (null)
+Meeting with Bob | 8 Feb 2026 at 10:00 | 8 Feb 2026 at 11:00 | f800940a... | x-fantastical://show?...␞
+Lunch | 8 Feb 2026 at 12:00 | 8 Feb 2026 at 13:00 | 2aab12d3... | x-fantastical://show?...␞
 ```
+
+Current fields (matching `EVENT_PROPS` in `shortcut_gen.py`):
+1. `title`
+2. `startDate` — localized format: "12 Feb 2026 at 12:00"
+3. `endDate`
+4. `calendarIdentifier` — hex hash, mapped to `calendarName` by `api._get_calendar_map()`
+5. `fantasticalURL` — deep link back to event in Fantastical
 
 Parser handles:
+- Record separator (0x1E) splits records — allows fields to contain newlines
 - Varying number of fields (graceful degradation)
 - Null values represented as `nil`, `null`, `(null)`, or empty string
-- Boolean fields (`isAllDay`) normalized from `true`/`yes`/`1`
 - Leading/trailing whitespace stripped from each field
-- Multiline fields (e.g., location with address) — pipe is the delimiter, newlines within fields are preserved
+- **Known issue:** pipe (`|`) in event titles (e.g., "Miro Council | Virtual Session") breaks field splitting
 
 See `shortcuts.py:parse_pipe_delimited()` for implementation.

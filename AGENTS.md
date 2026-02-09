@@ -12,7 +12,7 @@ A Python CLI tool (`fantastical`) providing composable access to Fantastical cal
 src/fantastical/
 ├── backend/
 │   ├── jxa.py            # osascript -l JavaScript subprocess runner
-│   ├── fantastical.py     # JXA scripts (calendars, selected) + URL scheme (create)
+│   ├── fantastical.py     # JXA scripts (calendars) + URL scheme (create)
 │   ├── shortcuts.py       # `shortcuts run` CLI wrapper (schedule, overdue)
 │   └── shortcut_gen.py    # Programmatic .shortcut file generation + signing
 ├── api.py                 # Business logic — both CLI and MCP call this
@@ -33,7 +33,7 @@ When adding a new capability: add backend function -> add api.py function -> add
 
 ### JXA (no setup required)
 - Runs via `osascript -l JavaScript -e "..."` subprocess
-- Can: list calendars, get selected items
+- Can: list calendars, provide calendar ID→name mapping for event enrichment
 - Cannot: query events by date, search
 - Gotcha: wrap every property access in try/catch — Fantastical's JXA bridge throws `-1700` type conversion errors on missing/null properties
 - Gotcha: use `title` not `name` for calendars
@@ -51,7 +51,6 @@ When adding a new capability: add backend function -> add api.py function -> add
 | Operation        | Backend        | Needs Shortcuts? |
 |------------------|----------------|-----------------|
 | List calendars   | JXA            | No              |
-| Selected items   | JXA            | No              |
 | Create event     | URL scheme     | No              |
 | Events by date   | Shortcuts      | Yes             |
 | Show schedule    | Shortcuts      | Yes             |
@@ -63,21 +62,34 @@ Shortcuts are generated as binary plists, signed via `shortcuts sign --mode anyo
 
 **Key format discovery:** App Intent parameters MUST use `WFTextTokenString` encoding (string + attachmentsByRange with U+FFFC placeholders), NOT `WFTextTokenAttachment`. Using the wrong encoding causes Fantastical to show interactive pickers instead of using the bound variable. See `docs/shortcuts-format.md` for the full technical deep-dive.
 
-**Current shortcut (NOT WORKING — see TODO.md P0):**
+**Current shortcut:**
 
 | Name | Intent / Query | Purpose | Status |
 |------|---------------|---------|--------|
-| `Fantastical - Find Events` | `CalendarItemQuery` (IntentCalendarItem) | Events across ALL calendars | **Broken** — runtime error |
+| `Fantastical - Find Events` | `CalendarItemQuery` (IntentCalendarItem) | Events across ALL calendars | **Working** — end-to-end verified |
 | `Fantastical - Show Schedule` (legacy) | `FKRShowScheduleIntent` | Events for a given date | Works but only one calendar set |
 
-The find events shortcut flow: CalendarItemQuery(startDate between start..end) -> Repeat Each -> pipe-delimited text (title\|start\|end\|cal\|allDay\|loc\|notes\|url) -> Output. Python-side date filtering narrows to the exact requested range.
+The find events shortcut flow: Current Date → Adjust Date (−14d) → Adjust Date (+14d) → CalendarItemQuery(startDate between start..end) → Repeat Each → pipe-delimited text (title\|start\|end\|cal\|fantasticalURL) → Text wrap → Output. Date range is computed dynamically at runtime — shortcut never goes stale. Python-side date filtering narrows to the exact requested range.
 
 **Key discoveries:**
-- CalendarItemQuery filter dates must be native `datetime` plist objects, NOT strings. String dates render as empty "Date" placeholders in Shortcuts.app.
-- Dynamic dates via WFTextTokenString inside `Values.Date`/`Values.AnotherDate` are not supported — entity query filters use a different structure from If conditions. See `docs/cherri.md`.
-- The generated shortcut still fails at runtime despite correct rendering in the UI. Next step: extract plist from a manually-created working shortcut and diff.
+- Dynamic dates in CalendarItemQuery `Values.Date`/`Values.AnotherDate` ARE possible using Adjust Date action outputs with `WFTextTokenAttachment` refs. The critical requirement is that `WFDuration` must use **string values** (`Magnitude: "14"`, `Unit: "days"`), NOT integers. Using integers silently breaks the Adjust Date output, causing the CalendarItemQuery to return 0 items without crashing. Discovered by extracting a working plist from Shortcuts.app UI (`_experiments/anything.shortcut`).
+- **Output action taint tracking:** Data from third-party apps is "tainted" — Output action refuses to emit it directly (`WFActionErrorDomain Code=4`, "missing an appIdentifier"). **Fix:** wrap Repeat Results in a Text action before Output to "launder" the data through a built-in action.
+- **`attendees` property CRASHES** BackgroundShortcutRunner — `IntentAttendee` entities don't support text coercion via `if_map:`. Do NOT include `attendees` in `EVENT_PROPS`.
+- `EVENT_PROPS` = `["title", "startDate", "endDate", "calendarIdentifier", "fantasticalURL"]`. The `fantasticalURL` is a deep link back into Fantastical; it includes `calendarIdentifier` in the URL, so it's unique per calendar copy (not a cross-calendar dedup key).
+- Date format from Shortcuts is localized: "12 Feb 2026 at 12:00" — parser handles this.
+- ±14 day range works well; ±90 days was too slow (~700+ events).
+- **WFDuration gotcha:** The Adjust Date action's `WFDuration` must use **string** values for `Magnitude` and `Unit` (e.g., `"14"` and `"days"`). Using integers (e.g., `14` and `4`) silently produces broken output that causes CalendarItemQuery to return 0 items. This was the root cause of 7 failed dynamic date experiments before extracting a working plist from Shortcuts.app.
+- **`WFWorkflowClientVersion` is required** for dynamic variable resolution in entity query filters. Without `"WFWorkflowClientVersion": "4046.0.2.2"` in the top-level plist, freshly-generated shortcuts with variable dates in CalendarItemQuery filters silently return 0 items. Shortcuts.app always includes this key; we must add it explicitly in `_build_shortcut_plist()`.
 
 **Historical note:** The previous `FKRShowScheduleIntent` approach only returned events from the active/default calendar set — events from other calendars were silently omitted. CalendarItemQuery queries ALL calendars.
+
+**Calendar name enrichment:** `api._get_events_for_range()` calls `_get_calendar_map()` (JXA) to build a `calendarIdentifier → calendarName` map, then enriches each event with `calendarName`. This is best-effort — if JXA times out, events still have the raw `calendarIdentifier`. The `--calendar` filter in `list_events()` matches on both `calendarName` and raw `calendarIdentifier`.
+
+**Shortcut updates:** When `EVENT_PROPS` changes (new fields added), the shortcut must be regenerated. Use `fantastical setup --force` to regenerate and re-import even when shortcuts already exist.
+
+### Privacy dialog on first run
+
+The first run of a new shortcut triggers a **privacy dialog** ("Allow ... to access Fantastical?"). The user must accept it once; subsequent runs work without the dialog. If the dialog doesn't appear, try restarting Shortcuts.app (`killall Shortcuts && open -a Shortcuts`).
 
 ### Adding a new generated shortcut
 
@@ -117,17 +129,43 @@ Shortcuts are stored in a system database, NOT as individual files on disk. Ther
 ### Shortcut deletion (important limitation)
 There is **no programmatic way to delete shortcuts** on macOS. The `shortcuts` CLI has no `delete` subcommand, and JXA's `delete()` method silently no-ops. The `fantastical uninstall` command works around this by looking up shortcut UUIDs via JXA and opening each one in Shortcuts.app via `shortcuts://open-shortcut?id=UUID` for the user to delete manually.
 
+## Debugging shortcuts
+
+See `docs/shortcuts-format.md` § "Debugging with macOS unified logs" for full details. Quick reference:
+
+```bash
+# View recent BackgroundShortcutRunner logs (after running a shortcut)
+/usr/bin/log show --last 5m --predicate 'process == "BackgroundShortcutRunner"' --style compact
+
+# Stream logs in real-time (start before running shortcut)
+/usr/bin/log stream --predicate 'process == "BackgroundShortcutRunner" OR process CONTAINS "hortcut"' --style compact
+```
+
+**Must use `/usr/bin/log`** — zsh has a builtin `log` function that shadows it.
+
+Key things to look for:
+- `finished with output of N items` — action completed successfully
+- `Terminating app due to uncaught exception` — crash (check which property/action)
+- `smart prompt` — privacy dialog was shown
+- `Disabling privacy prompts` — privacy already granted
+
 ## Testing
 
 No test suite yet. Manual verification:
 ```bash
-uv run fantastical calendars              # JXA — should list calendars
-uv run fantastical --json calendars       # JSON mode
-uv run fantastical selected               # JXA — whatever's selected in Fantastical
-uv run fantastical events today           # Shortcuts — will error if not set up
-uv run fantastical setup                  # Generates, signs, and imports shortcuts
-uv run fantastical uninstall              # Opens shortcuts in Shortcuts.app for deletion
+uv run fantastical calendars                      # JXA — should list calendars
+uv run fantastical --json calendars               # JSON mode
+uv run fantastical events today                   # Shortcuts — will error if not set up
+uv run fantastical events --calendar "Cal" today  # Filter by calendar name
+uv run fantastical --json events today            # JSON with calendarName enrichment
+uv run fantastical setup                          # Generates, signs, and imports shortcuts
+uv run fantastical setup --force                  # Regenerate shortcuts (after CLI update)
+uv run fantastical uninstall                      # Opens shortcuts in Shortcuts.app for deletion
 ```
+
+## Running Python
+
+**Always use `uv run python` instead of bare `python`.** This project uses `uv` for dependency management. Bare `python` is not available in the project environment — use `uv run python script.py` or `uv run fantastical <command>`.
 
 ## Dependencies
 
