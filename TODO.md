@@ -110,13 +110,3 @@ No test suite. Testable pure-Python functions:
 Moved `subprocess` and `time` to top-level imports in cli.py.
 
 
-## CLEANUP — Clean up test shortcuts
-
-**Priority:** P3
-
-Delete from Shortcuts.app after development:
-- "Fantastical - Tomorrow Test"
-- "Test Find"
-- "Test Minimal", "Test No Attendees" (if still present)
-- "claude-test-v2" (latest working test shortcut)
-- Any other `claude-test-*` shortcuts
