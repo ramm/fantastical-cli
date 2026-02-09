@@ -87,11 +87,9 @@ Narrowed `except (JXAError, Exception)` to `except (JXAError, KeyError)` — cat
 Replaced `api.show_schedule("today")` with `api.list_events(from_date="today", to_date="today")` in cli.py setup test. Deleted `show_schedule()` from api.py.
 
 
-## MCP — MCP server testing
+## ~~MCP — MCP server testing~~ ✓ RESOLVED
 
-**Priority:** P3
-
-The MCP server (`server.py`) wraps `api.py` but hasn't been tested end-to-end.
+pytest suite in `tests/test_server.py` covering tool registration, argument passing, JSON serialization, and error propagation. Uses `FastMCP.call_tool()` with mocked `api.*` — no macOS dependencies.
 
 
 ## ~~TESTS — Unit tests~~ ✓ RESOLVED
