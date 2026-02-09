@@ -114,7 +114,7 @@ def run_shortcut(key: str, input_text: str | None = None) -> str:
         cmd,
         capture_output=True,
         text=True,
-        timeout=60,
+        timeout=120,
     )
 
     if result.returncode != 0:

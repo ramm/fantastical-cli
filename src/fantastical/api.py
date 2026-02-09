@@ -184,15 +184,26 @@ def list_events(
     return events
 
 
-def search_events(query: str) -> list[dict]:
+def search_events(
+    query: str,
+    from_date: str | None = None,
+    to_date: str | None = None,
+) -> list[dict]:
     """Search events by title.
 
-    Requires shortcuts. Passes ±30 day range and title query to the shortcut
+    Requires shortcuts. Passes date range and title query to the shortcut
     for server-side filtering via CalendarItemQuery's title contains filter.
+    Default range is ±30 days; overridable with from_date/to_date.
+    Capped at 365 days like list_events.
     """
     today_date = date.today()
-    from_iso = (today_date - timedelta(days=30)).isoformat()
-    to_iso = (today_date + timedelta(days=30)).isoformat()
+    from_iso = _resolve_date(from_date) if from_date else (today_date - timedelta(days=30)).isoformat()
+    to_iso = _resolve_date(to_date) if to_date else (today_date + timedelta(days=30)).isoformat()
+
+    start = date.fromisoformat(from_iso)
+    end = date.fromisoformat(to_iso)
+    if (end - start).days > 365:
+        raise FantasticalError("Date range too large (max 365 days). Use a narrower range.")
 
     return _get_events_for_range(from_iso, to_iso, title_query=query)
 

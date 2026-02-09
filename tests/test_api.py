@@ -167,13 +167,66 @@ def test_search_passes_title_query(mock_get):
 
 
 @patch("fantastical.api._get_events_for_range")
-def test_search_date_range(mock_get):
+def test_search_default_date_range(mock_get):
     mock_get.return_value = []
     today = date.today()
     search_events(query="test")
     args = mock_get.call_args[0]
     assert args[0] == (today - timedelta(days=30)).isoformat()
     assert args[1] == (today + timedelta(days=30)).isoformat()
+
+
+@patch("fantastical.api._get_events_for_range")
+def test_search_custom_from_date(mock_get):
+    mock_get.return_value = []
+    today = date.today()
+    search_events(query="test", from_date="2026-01-01")
+    args = mock_get.call_args[0]
+    assert args[0] == "2026-01-01"
+    assert args[1] == (today + timedelta(days=30)).isoformat()
+
+
+@patch("fantastical.api._get_events_for_range")
+def test_search_custom_to_date(mock_get):
+    mock_get.return_value = []
+    today = date.today()
+    search_events(query="test", to_date="2026-06-01")
+    args = mock_get.call_args[0]
+    assert args[0] == (today - timedelta(days=30)).isoformat()
+    assert args[1] == "2026-06-01"
+
+
+@patch("fantastical.api._get_events_for_range")
+def test_search_custom_both_dates(mock_get):
+    mock_get.return_value = []
+    search_events(query="test", from_date="2026-01-01", to_date="2026-06-01")
+    args = mock_get.call_args[0]
+    assert args[0] == "2026-01-01"
+    assert args[1] == "2026-06-01"
+
+
+@patch("fantastical.api._get_events_for_range")
+def test_search_accepts_today_keyword(mock_get):
+    mock_get.return_value = []
+    search_events(query="test", from_date="today")
+    args = mock_get.call_args[0]
+    assert args[0] == date.today().isoformat()
+
+
+def test_search_range_cap_exceeded():
+    start = date.today().isoformat()
+    end = (date.today() + timedelta(days=366)).isoformat()
+    with pytest.raises(FantasticalError, match="too large"):
+        search_events(query="test", from_date=start, to_date=end)
+
+
+@patch("fantastical.api._get_events_for_range")
+def test_search_range_cap_365_ok(mock_get):
+    mock_get.return_value = []
+    start = date.today().isoformat()
+    end = (date.today() + timedelta(days=365)).isoformat()
+    search_events(query="test", from_date=start, to_date=end)
+    mock_get.assert_called_once()
 
 
 # --- _get_events_for_range ---
