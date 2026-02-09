@@ -125,7 +125,7 @@ def _get_calendar_map() -> dict[str, str]:
     try:
         cals = fan_backend.list_calendars()
         return {c["id"]: c["title"] for c in cals if "id" in c and "title" in c}
-    except (JXAError, Exception):
+    except (JXAError, KeyError):
         return {}
 
 

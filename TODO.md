@@ -85,11 +85,9 @@ Title filter added to CalendarItemQuery (Operator 99, `title contains`). Both `l
 `cli.py:176-179` rolls its own JSON output instead of using `_output()` like every other command. Missing `default=str` kwarg. Refactor to use `_output()` with a small format function for the human-readable "Event sent to Fantastical: ..." message.
 
 
-## CALMAP-EXCEPT — Fix redundant exception handling in `_get_calendar_map`
+## ~~CALMAP-EXCEPT — Fix redundant exception handling in `_get_calendar_map`~~ ✓ RESOLVED
 
-**Priority:** P3
-
-`api.py:128` catches `(JXAError, Exception)` — `Exception` is a superclass of `JXAError`, making `JXAError` redundant. Decide the right scope: `except Exception` if the intent is "never crash on enrichment", or narrow to `except (JXAError, KeyError)` if the intent was to catch JXA failures and dict comprehension issues specifically. The broad `except Exception` silently swallows unexpected bugs — narrowing it would surface real problems while still tolerating JXA timeouts.
+Narrowed `except (JXAError, Exception)` to `except (JXAError, KeyError)` — catches JXA timeouts and dict issues, surfaces real bugs.
 
 
 ## ~~SHOWSCHEDULE — Remove redundant `show_schedule()` function~~ ✓ RESOLVED
