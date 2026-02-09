@@ -94,15 +94,9 @@ Replaced `api.show_schedule("today")` with `api.list_events(from_date="today", t
 The MCP server (`server.py`) wraps `api.py` but hasn't been tested end-to-end.
 
 
-## TESTS — Unit tests
+## ~~TESTS — Unit tests~~ ✓ RESOLVED
 
-**Priority:** P3
-
-No test suite. Testable pure-Python functions:
-- `api._resolve_date` — date resolution, validation
-- `shortcuts.parse_shortcut_output` — field parsing, null handling, booleans
-- `api._get_events_for_range` — date filtering, calendar enrichment
-- `api.list_events` — date range cap, calendar name filtering
+pytest suite in `tests/` covering parsing, API logic, shortcut generation, and shortcut runner integration. All tests use pure Python or `unittest.mock` — no macOS dependencies.
 
 
 ## ~~IMPORTS — Move inline stdlib imports to top of `cli.py`~~ ✓ RESOLVED

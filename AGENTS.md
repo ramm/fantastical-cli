@@ -152,7 +152,16 @@ Key things to look for:
 
 ## Testing
 
-No test suite yet. Manual verification:
+```bash
+uv run pytest              # all tests
+uv run pytest -v           # verbose
+uv run pytest tests/test_parse.py  # single file
+uv run pytest -k "test_resolve"    # by name pattern
+```
+
+All tests are pure-Python or use `unittest.mock` — no macOS/Fantastical dependencies needed.
+
+### Manual verification
 ```bash
 uv run fantastical calendars                      # JXA — should list calendars
 uv run fantastical --json calendars               # JSON mode
