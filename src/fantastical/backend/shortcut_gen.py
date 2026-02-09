@@ -163,18 +163,91 @@ def _fantastical_action(intent_id: str, action_uuid: str,
     }
 
 
-def _detect_date_action(action_uuid: str) -> dict:
-    """Build a Date Detection action that reads from Shortcut Input."""
+def _detect_date_action(action_uuid: str, *,
+                        source_uuid: str | None = None,
+                        source_output_name: str | None = None) -> dict:
+    """Build a Date Detection action.
+
+    By default reads from Shortcut Input (ExtensionInput).
+    If source_uuid/source_output_name are given, reads from that action's output.
+    """
+    if source_uuid and source_output_name:
+        input_ref: dict = {
+            "Value": {
+                "Type": "ActionOutput",
+                "OutputUUID": source_uuid,
+                "OutputName": source_output_name,
+            },
+            "WFSerializationType": "WFTextTokenAttachment",
+        }
+    else:
+        input_ref = {
+            "Value": {
+                "Type": "ExtensionInput",
+            },
+            "WFSerializationType": "WFTextTokenAttachment",
+        }
     return {
         "WFWorkflowActionIdentifier": "is.workflow.actions.detect.date",
         "WFWorkflowActionParameters": {
-            "WFInput": {
-                "Value": {
-                    "Type": "ExtensionInput",
-                },
-                "WFSerializationType": "WFTextTokenAttachment",
-            },
+            "WFInput": input_ref,
             "UUID": action_uuid,
+        },
+    }
+
+
+def _split_text_action(action_uuid: str, separator: str = "|") -> dict:
+    """Build a Split Text action that splits Shortcut Input on a separator.
+
+    Uses WFTextSeparator="Custom" + WFTextCustomSeparator for the actual
+    separator string. Setting WFTextSeparator directly to the separator
+    character is silently ignored by the Shortcuts runtime.
+    """
+    return {
+        "WFWorkflowActionIdentifier": "is.workflow.actions.text.split",
+        "WFWorkflowActionParameters": {
+            "UUID": action_uuid,
+            "WFTextSeparator": "Custom",
+            "WFTextCustomSeparator": separator,
+            "text": {
+                "WFSerializationType": "WFTextTokenAttachment",
+                "Value": {"Type": "ExtensionInput"},
+            },
+        },
+    }
+
+
+def _get_item_from_list_action(action_uuid: str, source_uuid: str,
+                                source_output_name: str,
+                                index: int) -> dict:
+    """Build a Get Item from List action that gets a specific item by index.
+
+    Args:
+        action_uuid: UUID for this action.
+        source_uuid: UUID of the action providing the list.
+        source_output_name: OutputName of the source action.
+        index: 1-based index of the item to get.
+
+    Uses WFItemSpecifier="Item At Index" + WFItemIndex. The specifier MUST
+    be a string — WFGetItemType (integer) is silently ignored by the runtime.
+    Valid WFItemSpecifier values (confirmed via Cherri source + experiment 18):
+      "First Item", "Last Item", "Random Item",
+      "Item At Index" (+ WFItemIndex), "Items in Range" (+ WFItemRangeStart/End)
+    """
+    return {
+        "WFWorkflowActionIdentifier": "is.workflow.actions.getitemfromlist",
+        "WFWorkflowActionParameters": {
+            "UUID": action_uuid,
+            "WFItemSpecifier": "Item At Index",
+            "WFItemIndex": index,
+            "WFInput": {
+                "WFSerializationType": "WFTextTokenAttachment",
+                "Value": {
+                    "Type": "ActionOutput",
+                    "OutputUUID": source_uuid,
+                    "OutputName": source_output_name,
+                },
+            },
         },
     }
 
@@ -308,11 +381,8 @@ def _build_shortcut_plist(name: str, actions: list[dict],
 # Event fields output by the shortcut (order matters — must match parser)
 EVENT_PROPS = ["title", "startDate", "endDate", "calendarIdentifier", "fantasticalURL"]
 
-# Dynamic date range: ±N days from current date at runtime.
-# The shortcut uses Current Date → Adjust Date actions to compute the range
-# dynamically, so it never goes stale. Python-side filtering narrows to
-# the exact requested range.
-QUERY_RANGE_DAYS = 14
+# Legacy: was QUERY_RANGE_DAYS = 14 (hardcoded ±14d from current date).
+# Now the caller passes start/end dates as shortcut input.
 
 
 def _current_date_action(action_uuid: str) -> dict:
@@ -469,6 +539,106 @@ def _dynamic_date_query_actions(
     return actions, adjust_start_uuid, adjust_end_uuid
 
 
+def _input_date_query_actions(query_uuid: str) -> list[dict]:
+    """Build input-driven date query: Split → Get Item → Detect → Adjust → Query.
+
+    Expects shortcut input as "YYYY-MM-DD|YYYY-MM-DD" (start|end).
+
+    Flow:
+      Split Text on "|"
+        → Get Item 1 → Detect Dates → Adjust Date +0d (launders for filter)
+        → Get Item 2 → Detect Dates → Adjust Date +0d
+        → CalendarItemQuery(startDate between adj1..adj2)
+
+    CalendarItemQuery filter only works with Adjust Date action outputs
+    (proven in experiments 12-16). The +0 day adjustment launders the
+    Detect Dates output into the required format.
+    """
+    split_uuid = _uuid()
+    get_item1_uuid = _uuid()
+    detect1_uuid = _uuid()
+    adjust1_uuid = _uuid()
+    get_item2_uuid = _uuid()
+    detect2_uuid = _uuid()
+    adjust2_uuid = _uuid()
+
+    actions = [
+        # Split input "start|end" on "|"
+        _split_text_action(split_uuid, separator="|"),
+
+        # --- Start date chain ---
+        _get_item_from_list_action(
+            get_item1_uuid, split_uuid, "Split Text", index=1,
+        ),
+        _detect_date_action(
+            detect1_uuid,
+            source_uuid=get_item1_uuid,
+            source_output_name="Item from List",
+        ),
+        _adjust_date_action(
+            adjust1_uuid, detect1_uuid, "Dates",
+            days=0, custom_output_name="Date",
+        ),
+
+        # --- End date chain ---
+        _get_item_from_list_action(
+            get_item2_uuid, split_uuid, "Split Text", index=2,
+        ),
+        _detect_date_action(
+            detect2_uuid,
+            source_uuid=get_item2_uuid,
+            source_output_name="Item from List",
+        ),
+        _adjust_date_action(
+            adjust2_uuid, detect2_uuid, "Dates",
+            days=0,
+        ),
+
+        # CalendarItemQuery with input-driven date filter
+        {
+            "WFWorkflowActionIdentifier": f"{FANTASTICAL_BUNDLE_ID}.IntentCalendarItem",
+            "WFWorkflowActionParameters": {
+                "AppIntentDescriptor": {
+                    "TeamIdentifier": FANTASTICAL_TEAM_ID,
+                    "BundleIdentifier": FANTASTICAL_BUNDLE_ID,
+                    "Name": FANTASTICAL_APP_NAME,
+                    "AppIntentIdentifier": "IntentCalendarItem",
+                    "ActionRequiresAppInstallation": True,
+                },
+                "UUID": query_uuid,
+                "WFContentItemFilter": {
+                    "WFSerializationType": "WFContentPredicateTableTemplate",
+                    "Value": {
+                        "WFActionParameterFilterPrefix": 1,
+                        "WFContentPredicateBoundedDate": False,
+                        "WFActionParameterFilterTemplates": [
+                            {
+                                "Operator": 1003,
+                                "Property": "startDate",
+                                "Removable": True,
+                                "Values": {
+                                    "Unit": 4,
+                                    "Date": _var_attachment(
+                                        var_type="ActionOutput",
+                                        output_uuid=adjust1_uuid,
+                                        output_name="Date",
+                                    ),
+                                    "AnotherDate": _var_attachment(
+                                        var_type="ActionOutput",
+                                        output_uuid=adjust2_uuid,
+                                        output_name="Adjusted Date",
+                                    ),
+                                },
+                            },
+                        ],
+                    },
+                },
+            },
+        },
+    ]
+    return actions
+
+
 def _repeat_text_output_actions(query_uuid: str, prop_names: list[str]) -> list[dict]:
     """Build Repeat Each → Text → Text wrap → Output pipeline.
 
@@ -520,29 +690,31 @@ def build_find_events() -> dict:
     """Build the 'Fantastical - Find Events' shortcut plist.
 
     Uses CalendarItemQuery to find events across ALL calendars within
-    a dynamic ±14 day range from the current date at runtime.
+    a caller-specified date range passed as input text.
 
-    The date range is computed at RUNTIME using Current Date → Adjust Date
-    actions, so the shortcut never goes stale. Python-side filtering
-    narrows to the exact requested dates. The shortcut only needs to be
-    generated once during `fantastical setup`.
+    The caller passes "YYYY-MM-DD|YYYY-MM-DD" (start|end) as shortcut input.
+    The shortcut splits the input, detects dates, launders them through
+    Adjust Date +0d (required for CalendarItemQuery filter compatibility),
+    and uses the result as the query date range.
 
     Flow:
-      Current Date → Adjust Date (−14d) → Adjust Date (+14d)
+      Input "start|end"
+        → Split Text on "|"
+        → Get Item 1 → Detect Dates → Adjust Date +0d (start)
+        → Get Item 2 → Detect Dates → Adjust Date +0d (end)
         → CalendarItemQuery(startDate between start..end)
         → Repeat Each → pipe-delimited text
         → Text wrap (bypasses taint tracking)
         → Output
     """
     query_uuid = _uuid()
-    date_actions, _, _ = _dynamic_date_query_actions(query_uuid, QUERY_RANGE_DAYS)
+    date_actions = _input_date_query_actions(query_uuid)
 
     actions = [
         *date_actions,
-        # Repeat → Text → End Repeat → Text wrap → Output
         *_repeat_text_output_actions(query_uuid, EVENT_PROPS),
     ]
-    return _build_shortcut_plist("Fantastical - Find Events", actions, accepts_input=False)
+    return _build_shortcut_plist("Fantastical - Find Events", actions, accepts_input=True)
 
 
 SHORTCUT_BUILDERS = {

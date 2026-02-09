@@ -482,7 +482,89 @@ Static `datetime` plist objects also work (the original approach), but dynamic d
 
 **`WFWorkflowClientVersion` is required for dynamic variables in entity query filters.** Without `"WFWorkflowClientVersion": "4046.0.2.2"` in the top-level plist, freshly-generated shortcuts with variable references in CalendarItemQuery `Values.Date`/`Values.AnotherDate` silently return 0 items — even when the encoding is structurally identical to a working shortcut. The Shortcuts engine apparently uses this key to decide whether to resolve variable references in filter predicates. Shortcuts exported from Shortcuts.app always include this key; programmatically-generated plists must add it explicitly.
 
-**History:** Initial attempts (A/B in `_experiments/12_dynamic_dates.py`) crashed because they used Detect Dates output (not Adjust Date) and had no proper date source. Attempts F/G/H (`_experiments/13_dynamic_dates_v2.py`) used Adjust Date but with integer WFDuration values, causing silent failures. v3–v5 (`_experiments/14–16_*.py`) had correct encoding but returned 0 items due to missing `WFWorkflowClientVersion`. v6 (`_experiments/17_anything_plus_output.py`) confirmed the fix by reusing the original plist (with the key) and appending output actions — it returned events. The correct encoding was discovered by extracting a working plist from Shortcuts.app UI (`_experiments/anything.shortcut`).
+**History:** Initial attempts crashed because they used Detect Dates output directly (not Adjust Date) in the CalendarItemQuery filter. Next attempts used Adjust Date but with integer WFDuration values, causing silent failures. Further iterations had correct encoding but returned 0 items due to missing `WFWorkflowClientVersion`. The correct encoding was discovered by extracting a working plist from a shortcut created in Shortcuts.app UI, then diffing against the programmatic output.
+
+### Split Text action
+
+**Action:** `is.workflow.actions.text.split`
+
+The separator must be specified as `WFTextSeparator: "Custom"` with the actual character in `WFTextCustomSeparator`. Setting `WFTextSeparator` directly to the separator string (e.g., `"|"`) is silently ignored — the action returns the input unsplit.
+
+```json
+{
+  "WFWorkflowActionIdentifier": "is.workflow.actions.text.split",
+  "WFWorkflowActionParameters": {
+    "UUID": "...",
+    "WFTextSeparator": "Custom",
+    "WFTextCustomSeparator": "|",
+    "text": {
+      "WFSerializationType": "WFTextTokenAttachment",
+      "Value": {"Type": "ExtensionInput"}
+    }
+  }
+}
+```
+
+### Get Item from List action
+
+**Action:** `is.workflow.actions.getitemfromlist`
+
+**Critical:** The item type is controlled by `WFItemSpecifier` (string), NOT `WFGetItemType` (integer). Using `WFGetItemType` is silently ignored — the action always returns the first item regardless of the integer value.
+
+Valid `WFItemSpecifier` values (confirmed via [Cherri source](https://github.com/electrikmilk/cherri/blob/main/actions/scripting.cherri)):
+
+| WFItemSpecifier | Extra params | Notes |
+|---|---|---|
+| (absent/default) | — | First Item |
+| `"First Item"` | — | Explicit first item |
+| `"Last Item"` | — | Last item |
+| `"Random Item"` | — | Random item |
+| `"Item At Index"` | `WFItemIndex: N` | 1-based index. Note capital "A" in "At" |
+| `"Items in Range"` | `WFItemRangeStart`, `WFItemRangeEnd` | 1-based range |
+
+```json
+{
+  "WFWorkflowActionIdentifier": "is.workflow.actions.getitemfromlist",
+  "WFWorkflowActionParameters": {
+    "UUID": "...",
+    "WFItemSpecifier": "Item At Index",
+    "WFItemIndex": 2,
+    "WFInput": {
+      "WFSerializationType": "WFTextTokenAttachment",
+      "Value": {
+        "Type": "ActionOutput",
+        "OutputUUID": "split-text-uuid",
+        "OutputName": "Split Text"
+      }
+    }
+  }
+}
+```
+
+All specifiers confirmed working (including `"Item At Index"` with indices 1–3 on a 3-element split list). Index 0 gives an explicit error: "You asked for item 0, but the first item is at index 1."
+
+**History:** Experiments with `WFGetItemType` (integer values 0–4) all returned the first item. The correct `WFItemSpecifier` (string) was discovered by testing parameter variants and confirmed against the Cherri compiler source. The production shortcut uses `"Item At Index"` with indices 1 and 2 for the 2-element date split.
+
+### CalendarItemQuery "between" is end-exclusive
+
+The `Operator: 1003` ("is between") date filter **excludes the end date**. A query for `startDate between Feb 9..Feb 9` returns zero results. To query a single day, the end date must be the next day (e.g., `Feb 9..Feb 10`).
+
+The Python layer (`shortcuts.get_events()`) adds +1 day to the caller's `to_date` to make the API inclusive from the user's perspective.
+
+### Input-driven date query pattern
+
+The production Find Events shortcut receives the date range as input text (`"YYYY-MM-DD|YYYY-MM-DD"`) instead of hardcoding a fixed window. The full action chain:
+
+```
+Input "2026-03-01|2026-03-16" (via shortcuts run -i)
+  → Split Text on "|" (Custom separator)
+  → Get Item At Index 1 → Detect Dates → Adjust Date +0d  (start)
+  → Get Item At Index 2 → Detect Dates → Adjust Date +0d  (end)
+  → CalendarItemQuery(startDate between adj1..adj2)
+  → Repeat Each → Text → Text wrap → Output
+```
+
+The Adjust Date +0d step is not a no-op — it "launders" the Detect Dates output into a format CalendarItemQuery's filter accepts. Without it, the filter silently returns 0 items. The exact reason is unknown but likely related to the internal type system: Detect Dates produces a `WFDateContentItem` array while Adjust Date produces a single `WFDateContentItem` that the predicate evaluator can compare.
 
 ### Output action taint tracking
 

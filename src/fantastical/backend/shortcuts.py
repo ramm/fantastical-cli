@@ -21,7 +21,11 @@ class ShortcutNotFoundError(Exception):
 
 
 def list_installed_shortcuts() -> list[str]:
-    """List all installed shortcut names."""
+    """List all installed shortcut names.
+
+    Called multiple times during setup (status check, legacy check, verification).
+    No caching — consistency is worth a little latency.
+    """
     result = subprocess.run(
         ["shortcuts", "list"],
         capture_output=True,
@@ -174,14 +178,25 @@ def parse_pipe_delimited(output: str) -> list[dict]:
     return results
 
 
-def get_events() -> list[dict]:
-    """Get all events in the shortcut's static date range via CalendarItemQuery.
+def get_events(from_date: str, to_date: str) -> list[dict]:
+    """Get events in a date range via CalendarItemQuery.
 
-    Returns all events across ALL calendars within the ±90 day range
-    hardcoded during shortcut generation. The caller is responsible
-    for filtering to the desired date range.
+    Args:
+        from_date: Start date as YYYY-MM-DD (inclusive).
+        to_date: End date as YYYY-MM-DD (inclusive).
+
+    Returns all events across ALL calendars within the requested range.
+    The shortcut receives the dates as input and queries Fantastical directly.
+
+    Note: CalendarItemQuery's "between" operator excludes the end date,
+    so we add 1 day to make to_date inclusive from the caller's perspective.
     """
-    output = run_shortcut("find_events")
+    from datetime import date, timedelta
+
+    # Make end date inclusive: CalendarItemQuery "between" excludes end
+    end_exclusive = (date.fromisoformat(to_date) + timedelta(days=1)).isoformat()
+    input_text = f"{from_date}|{end_exclusive}"
+    output = run_shortcut("find_events", input_text=input_text)
     return parse_pipe_delimited(output)
 
 
