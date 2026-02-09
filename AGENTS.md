@@ -43,7 +43,7 @@ When adding a new capability: add backend function -> add api.py function -> add
 - Runs via `shortcuts run "Name"` subprocess
 - Can: everything JXA can't — date-range queries, schedule, search
 - Helper shortcuts are **auto-generated** by `shortcut_gen.py`, signed, and imported during setup
-- Shortcuts output pipe-delimited text, parsed by `parse_pipe_delimited()`
+- Shortcuts output delimited text (fields separated by `\x1f`, records by `\x1e`), parsed by `parse_shortcut_output()`
 - The `shortcuts` CLI uses Unicode smart quotes in errors — detection must handle `'` (U+2019) not just ASCII `'`
 
 ### Backend selection table
@@ -69,7 +69,7 @@ Shortcuts are generated as binary plists, signed via `shortcuts sign --mode anyo
 | `Fantastical - Find Events` | `CalendarItemQuery` (IntentCalendarItem) | Events across ALL calendars | **Working** — end-to-end verified |
 | `Fantastical - Show Schedule` (legacy) | `FKRShowScheduleIntent` | Events for a given date | Works but only one calendar set |
 
-The find events shortcut flow: Input "start|end" → Split Text → Get Item 1 → Detect Dates → Adjust Date +0d → Get Item 2 → Detect Dates → Adjust Date +0d → CalendarItemQuery(startDate between adj1..adj2) → Repeat Each → pipe-delimited text (title\|start\|end\|cal\|fantasticalURL) → Text wrap → Output. The caller passes the exact date range as shortcut input; Python-side filtering is kept as a safety net.
+The find events shortcut flow: Input "start|end|titleQuery" → Split Text → Get Item 1 → Detect Dates → Adjust Date +0d → Get Item 2 → Detect Dates → Adjust Date +0d → Get Item 3 (title query) → CalendarItemQuery(startDate between adj1..adj2 AND title contains item3) → Repeat Each → delimited text (title`\x1f`start`\x1f`end`\x1f`cal`\x1f`fantasticalURL) → Text wrap → Output. Fields use ASCII Unit Separator (0x1F); records end with Record Separator (0x1E). The caller passes the exact date range and optional title query as shortcut input; empty title = no-op (matches all events). Both `list_events` and `search_events` use this single shortcut — search passes the query string for server-side filtering.
 
 **Key discoveries:**
 - Dynamic dates in CalendarItemQuery `Values.Date`/`Values.AnotherDate` ARE possible using Adjust Date action outputs with `WFTextTokenAttachment` refs. The critical requirement is that `WFDuration` must use **string values** (`Magnitude: "14"`, `Unit: "days"`), NOT integers. Using integers silently breaks the Adjust Date output, causing the CalendarItemQuery to return 0 items without crashing. Discovered by extracting a working plist from a shortcut created in Shortcuts.app UI.

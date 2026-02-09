@@ -126,21 +126,23 @@ def _text_token_string(template_parts: list[str], attachments: list[dict]) -> di
 
 
 RECORD_SEPARATOR = "\x1e"
+FIELD_SEPARATOR = "\x1f"
 
 
-def _pipe_delimited_text(prop_names: list[str]) -> dict:
-    """Build a WFTextTokenString for pipe-delimited Repeat Item properties.
+def _delimited_text(prop_names: list[str]) -> dict:
+    """Build a WFTextTokenString for delimited Repeat Item properties.
 
     E.g. for ["title", "startDate", "endDate"]:
-      Repeat Item.title | Repeat Item.startDate | Repeat Item.endDate\x1e
+      Repeat Item.title\x1fRepeat Item.startDate\x1fRepeat Item.endDate\x1e
 
-    Each record ends with ASCII Record Separator (0x1E) so the parser
-    can distinguish record boundaries from newlines within fields
-    (e.g., multi-line locations or attendee lists).
+    Fields are separated by ASCII Unit Separator (0x1F) — safe even when
+    event titles contain pipes.  Each record ends with ASCII Record
+    Separator (0x1E) so the parser can distinguish record boundaries from
+    newlines within fields (e.g., multi-line locations or attendee lists).
     """
-    # Template parts: ["", " | ", " | ", ..., "\x1e"]
-    # Empty before first, " | " between each, record separator after last
-    parts = [""] + [" | "] * (len(prop_names) - 1) + [RECORD_SEPARATOR]
+    # Template parts: ["", "\x1f", "\x1f", ..., "\x1e"]
+    # Empty before first, field separator between each, record separator after last
+    parts = [""] + [FIELD_SEPARATOR] * (len(prop_names) - 1) + [RECORD_SEPARATOR]
     attachments = [
         _repeat_item_property(p)["Value"] for p in prop_names
     ]
@@ -542,17 +544,22 @@ def _dynamic_date_query_actions(
 def _input_date_query_actions(query_uuid: str) -> list[dict]:
     """Build input-driven date query: Split → Get Item → Detect → Adjust → Query.
 
-    Expects shortcut input as "YYYY-MM-DD|YYYY-MM-DD" (start|end).
+    Expects shortcut input as "YYYY-MM-DD|YYYY-MM-DD|titleQuery" (start|end|title).
 
     Flow:
       Split Text on "|"
         → Get Item 1 → Detect Dates → Adjust Date +0d (launders for filter)
         → Get Item 2 → Detect Dates → Adjust Date +0d
-        → CalendarItemQuery(startDate between adj1..adj2)
+        → Get Item 3 (title query text — no date detection needed)
+        → CalendarItemQuery(startDate between adj1..adj2 AND title contains item3)
 
     CalendarItemQuery filter only works with Adjust Date action outputs
     (proven in experiments 12-16). The +0 day adjustment launders the
     Detect Dates output into the required format.
+
+    The title filter uses Operator 99 ("contains") with a WFTextTokenString
+    referencing the Get Item 3 output. Empty string = no-op (matches all events),
+    so no conditional logic is needed. Confirmed in experiment 19.
     """
     split_uuid = _uuid()
     get_item1_uuid = _uuid()
@@ -561,9 +568,10 @@ def _input_date_query_actions(query_uuid: str) -> list[dict]:
     get_item2_uuid = _uuid()
     detect2_uuid = _uuid()
     adjust2_uuid = _uuid()
+    get_item3_uuid = _uuid()
 
     actions = [
-        # Split input "start|end" on "|"
+        # Split input "start|end|title" on "|"
         _split_text_action(split_uuid, separator="|"),
 
         # --- Start date chain ---
@@ -594,7 +602,12 @@ def _input_date_query_actions(query_uuid: str) -> list[dict]:
             days=0,
         ),
 
-        # CalendarItemQuery with input-driven date filter
+        # --- Title query (item 3) — just get the text, no date detection ---
+        _get_item_from_list_action(
+            get_item3_uuid, split_uuid, "Split Text", index=3,
+        ),
+
+        # CalendarItemQuery with date range + title contains filter
         {
             "WFWorkflowActionIdentifier": f"{FANTASTICAL_BUNDLE_ID}.IntentCalendarItem",
             "WFWorkflowActionParameters": {
@@ -630,6 +643,18 @@ def _input_date_query_actions(query_uuid: str) -> list[dict]:
                                     ),
                                 },
                             },
+                            {
+                                "Operator": 99,
+                                "Property": "title",
+                                "Removable": True,
+                                "Values": {
+                                    "Unit": 4,
+                                    "String": _token_string_param(
+                                        output_uuid=get_item3_uuid,
+                                        output_name="Item from List",
+                                    ),
+                                },
+                            },
                         ],
                     },
                 },
@@ -642,8 +667,8 @@ def _input_date_query_actions(query_uuid: str) -> list[dict]:
 def _repeat_text_output_actions(query_uuid: str, prop_names: list[str]) -> list[dict]:
     """Build Repeat Each → Text → Text wrap → Output pipeline.
 
-    Takes CalendarItemQuery results and formats them as pipe-delimited
-    text with record separators.
+    Takes CalendarItemQuery results and formats them as delimited text
+    with record separators.
 
     The extra Text action wrapping Repeat Results before Output is required
     to bypass macOS taint tracking. Data from third-party apps (Fantastical)
@@ -654,7 +679,7 @@ def _repeat_text_output_actions(query_uuid: str, prop_names: list[str]) -> list[
     group_uuid = _uuid()
     repeat_output_uuid = _uuid()
     text_wrap_uuid = _uuid()
-    event_text = _pipe_delimited_text(prop_names)
+    event_text = _delimited_text(prop_names)
 
     return [
         # Repeat Each (over calendar items)
@@ -663,7 +688,7 @@ def _repeat_text_output_actions(query_uuid: str, prop_names: list[str]) -> list[
                            output_name="Fantastical Calendar Item"),
             group_uuid,
         ),
-        # Format event as pipe-delimited text
+        # Format event as delimited text
         _text_action(event_text),
         # End repeat
         _repeat_each_end(group_uuid, repeat_output_uuid),
@@ -690,20 +715,20 @@ def build_find_events() -> dict:
     """Build the 'Fantastical - Find Events' shortcut plist.
 
     Uses CalendarItemQuery to find events across ALL calendars within
-    a caller-specified date range passed as input text.
+    a caller-specified date range passed as input text, optionally
+    filtered by title.
 
-    The caller passes "YYYY-MM-DD|YYYY-MM-DD" (start|end) as shortcut input.
-    The shortcut splits the input, detects dates, launders them through
-    Adjust Date +0d (required for CalendarItemQuery filter compatibility),
-    and uses the result as the query date range.
+    The caller passes "YYYY-MM-DD|YYYY-MM-DD|titleQuery" (start|end|title)
+    as shortcut input. Empty title = no-op (matches all events).
 
     Flow:
-      Input "start|end"
+      Input "start|end|title"
         → Split Text on "|"
         → Get Item 1 → Detect Dates → Adjust Date +0d (start)
         → Get Item 2 → Detect Dates → Adjust Date +0d (end)
-        → CalendarItemQuery(startDate between start..end)
-        → Repeat Each → pipe-delimited text
+        → Get Item 3 (title query text)
+        → CalendarItemQuery(startDate between start..end AND title contains title)
+        → Repeat Each → delimited text
         → Text wrap (bypasses taint tracking)
         → Output
     """

@@ -155,14 +155,14 @@ Used for Text action content AND **App Intent parameters**. Wraps variables in a
 
 The `attachmentsByRange` keys are `{position, length}` where position is the UTF-16 offset of the `\ufffc` character. For a single variable at the start, it's always `{0, 1}`.
 
-For multiple inline variables (pipe-delimited text):
+For multiple inline variables (delimited text, using `\x1f` Unit Separator):
 ```json
 {
-  "string": "\ufffc | \ufffc | \ufffc",
+  "string": "\ufffc\u001f\ufffc\u001f\ufffc",
   "attachmentsByRange": {
     "{0, 1}": { "Type": "Variable", "VariableName": "Repeat Item", "Aggrandizements": [...] },
-    "{4, 1}": { "Type": "Variable", "VariableName": "Repeat Item", "Aggrandizements": [...] },
-    "{8, 1}": { "Type": "Variable", "VariableName": "Repeat Item", "Aggrandizements": [...] }
+    "{2, 1}": { "Type": "Variable", "VariableName": "Repeat Item", "Aggrandizements": [...] },
+    "{4, 1}": { "Type": "Variable", "VariableName": "Repeat Item", "Aggrandizements": [...] }
   }
 }
 ```
@@ -438,14 +438,23 @@ Note: the identifier uses the **entity name** (`IntentCalendarItem`), not the qu
 
 ### Filter operator values
 
-From the CalendarItemQuery metadata and shortcut extraction:
+**Important:** The metadata `comparators` values (from `extract.actionsdata`) are NOT the same as the plist `Operator` values. The plist uses the Shortcuts engine operator IDs (same as Cherri compiler). The metadata comparator `6` maps to plist Operator `99`.
+
+From shortcut plist extraction (confirmed working):
 
 | Operator | Meaning | Context |
 |----------|---------|---------|
 | `1003` | is between | Date range filter (uses `Date` + `AnotherDate` in `Values`) |
-| `9` | is between | Alternate comparator value from metadata (may differ by context) |
-| `6` | contains | String filter (used for title search) |
+| `99` | contains | String filter (used for title search — see below) |
 | `0` | equals | Exact match |
+
+From metadata `comparators` (internal identifiers, NOT plist values):
+
+| Comparator | Meaning | Plist Operator |
+|------------|---------|----------------|
+| `9` | is between | `1003` |
+| `6` | contains | `99` |
+| `0` | equals | `0` |
 
 ### Date values in filters
 
@@ -483,6 +492,52 @@ Static `datetime` plist objects also work (the original approach), but dynamic d
 **`WFWorkflowClientVersion` is required for dynamic variables in entity query filters.** Without `"WFWorkflowClientVersion": "4046.0.2.2"` in the top-level plist, freshly-generated shortcuts with variable references in CalendarItemQuery `Values.Date`/`Values.AnotherDate` silently return 0 items — even when the encoding is structurally identical to a working shortcut. The Shortcuts engine apparently uses this key to decide whether to resolve variable references in filter predicates. Shortcuts exported from Shortcuts.app always include this key; programmatically-generated plists must add it explicitly.
 
 **History:** Initial attempts crashed because they used Detect Dates output directly (not Adjust Date) in the CalendarItemQuery filter. Next attempts used Adjust Date but with integer WFDuration values, causing silent failures. Further iterations had correct encoding but returned 0 items due to missing `WFWorkflowClientVersion`. The correct encoding was discovered by extracting a working plist from a shortcut created in Shortcuts.app UI, then diffing against the programmatic output.
+
+### Title contains filter (experiment 19)
+
+The `title contains` filter uses `Operator: 99` with `Values.String` and `Values.Unit: 4`. Discovered by extracting a plist from a manually-created shortcut in Shortcuts.app (the metadata comparator value `6` does NOT work as a plist Operator — it is silently ignored).
+
+**Static string:**
+```json
+{
+  "Operator": 99,
+  "Property": "title",
+  "Removable": true,
+  "Values": {
+    "Unit": 4,
+    "String": "holiday"
+  }
+}
+```
+
+**Dynamic variable (from action output):**
+```json
+{
+  "Operator": 99,
+  "Property": "title",
+  "Removable": true,
+  "Values": {
+    "Unit": 4,
+    "String": {
+      "WFSerializationType": "WFTextTokenString",
+      "Value": {
+        "string": "\ufffc",
+        "attachmentsByRange": {
+          "{0, 1}": {
+            "OutputUUID": "get-item-uuid",
+            "Type": "ActionOutput",
+            "OutputName": "Item from List"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+**Key finding: empty string is a no-op.** `title contains ""` matches all events, so the title filter can always be included — no If/Otherwise conditional needed. This enables a single universal shortcut for both date listing and title search.
+
+**Combining filters:** Multiple filters in `WFActionParameterFilterTemplates` are AND-combined (`WFActionParameterFilterPrefix: 1`). A date range + title contains filter works correctly together.
 
 ### Split Text action
 
@@ -777,11 +832,14 @@ Properties tested via `WFPropertyVariableAggrandizement` on `IntentCalendarItem`
 
 ## Output parsing
 
-Shortcuts pipe output to stdout as plain text. Our shortcuts format output as pipe-delimited records separated by ASCII Record Separator (0x1E):
+Shortcuts pipe output to stdout as plain text. Our shortcuts format output as delimited records using ASCII control characters:
+
+- **Field separator:** `\x1f` (Unit Separator) between fields within a record
+- **Record separator:** `\x1e` (Record Separator) at the end of each record
 
 ```
-Meeting with Bob | 8 Feb 2026 at 10:00 | 8 Feb 2026 at 11:00 | f800940a... | x-fantastical://show?...␞
-Lunch | 8 Feb 2026 at 12:00 | 8 Feb 2026 at 13:00 | 2aab12d3... | x-fantastical://show?...␞
+Meeting with Bob␟8 Feb 2026 at 10:00␟8 Feb 2026 at 11:00␟f800940a...␟x-fantastical://show?...␞
+Lunch␟8 Feb 2026 at 12:00␟8 Feb 2026 at 13:00␟2aab12d3...␟x-fantastical://show?...␞
 ```
 
 Current fields (matching `EVENT_PROPS` in `shortcut_gen.py`):
@@ -793,9 +851,9 @@ Current fields (matching `EVENT_PROPS` in `shortcut_gen.py`):
 
 Parser handles:
 - Record separator (0x1E) splits records — allows fields to contain newlines
+- Unit separator (0x1F) splits fields — safe even when titles contain pipes
 - Varying number of fields (graceful degradation)
 - Null values represented as `nil`, `null`, `(null)`, or empty string
 - Leading/trailing whitespace stripped from each field
-- **Known issue:** pipe (`|`) in event titles (e.g., "Miro Council | Virtual Session") breaks field splitting
 
-See `shortcuts.py:parse_pipe_delimited()` for implementation.
+See `shortcuts.py:parse_shortcut_output()` for implementation.

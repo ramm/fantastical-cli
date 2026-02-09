@@ -129,18 +129,19 @@ def _get_calendar_map() -> dict[str, str]:
         return {}
 
 
-def _get_events_for_range(from_iso: str, to_iso: str) -> list[dict]:
+def _get_events_for_range(from_iso: str, to_iso: str, title_query: str = "") -> list[dict]:
     """Get events across a date range using CalendarItemQuery.
 
-    Passes the date range to the shortcut as input so CalendarItemQuery
-    fetches the exact range. Python-side filtering is kept as a safety net.
+    Passes the date range and optional title filter to the shortcut as input
+    so CalendarItemQuery fetches the exact range with server-side filtering.
+    Python-side date filtering is kept as a safety net.
     Events are enriched with calendarName from JXA when available.
     """
     start = date.fromisoformat(from_iso)
     end = date.fromisoformat(to_iso)
 
     all_events = _run_shortcut_or_raise(
-        "find_events", shortcuts.get_events, from_iso, to_iso,
+        "find_events", shortcuts.get_events, from_iso, to_iso, title_query,
     )
     cal_map = _get_calendar_map()
 
@@ -189,16 +190,14 @@ def list_events(
 def search_events(query: str) -> list[dict]:
     """Search events by title.
 
-    Requires shortcuts. Passes ±30 day range to the shortcut for
-    CalendarItemQuery, then filters by title in Python.
+    Requires shortcuts. Passes ±30 day range and title query to the shortcut
+    for server-side filtering via CalendarItemQuery's title contains filter.
     """
     today_date = date.today()
     from_iso = (today_date - timedelta(days=30)).isoformat()
     to_iso = (today_date + timedelta(days=30)).isoformat()
 
-    events = _get_events_for_range(from_iso, to_iso)
-    query_lower = query.lower()
-    return [e for e in events if query_lower in (e.get("title") or "").lower()]
+    return _get_events_for_range(from_iso, to_iso, title_query=query)
 
 
 def show_schedule(date_str: str = "today") -> list[dict]:

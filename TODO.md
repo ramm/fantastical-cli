@@ -21,13 +21,6 @@ Anyone reading `ev["calendar"]` would expect a human-readable name, not a UUID. 
 - `cli.py:54` — `ev.get("calendar", "")` → `ev.get("calendarIdentifier", "")`
 
 
-## PIPE — Fix pipe delimiter collision
-
-**Priority:** P0
-
-Event titles containing `|` (e.g., "Miro Engineering Council | Virtual Advisory Session") break the pipe-delimited parser. Need a different delimiter or escaping. See `shortcuts.py:parse_pipe_delimited()` and `shortcut_gen.py:_pipe_delimited_text()`.
-
-
 ## ATTENDEES — Enrich event data with attendees and emails
 
 **Priority:** P1
@@ -64,11 +57,9 @@ No edit/update capability exists yet. Fantastical's 16 App Intents are all read-
 **Fix:** Create a shortcut wrapping `FKRCreateFromInputIntent`, output created event properties.
 
 
-## SEARCH — Search performance
+## ~~SEARCH — Search performance~~ ✓ RESOLVED
 
-**Priority:** P2
-
-`search_events` uses a single CalendarItemQuery call with ±30 day range, then filters by title in Python. Could add a `title contains` filter directly in the CalendarItemQuery `WFContentItemFilter` to push filtering to Fantastical.
+Title filter added to CalendarItemQuery (Operator 99, `title contains`). Both `list_events` and `search_events` now use one shortcut with server-side filtering. Input format: `start|end|titleQuery` (empty title = no-op). Python-side title filtering removed from `search_events()`.
 
 
 ## PKGNAME — Package name `fantastical-mcp` doesn't match the project
@@ -123,7 +114,7 @@ The MCP server (`server.py`) wraps `api.py` but hasn't been tested end-to-end.
 
 No test suite. Testable pure-Python functions:
 - `api._resolve_date` — date resolution, validation
-- `shortcuts.parse_pipe_delimited` — field parsing, null handling, booleans
+- `shortcuts.parse_shortcut_output` — field parsing, null handling, booleans
 - `api._get_events_for_range` — date filtering, calendar enrichment
 - `api.list_events` — date range cap, calendar name filtering
 

@@ -131,10 +131,12 @@ Found in parameter `valueType.primitive.wrapper.typeIdentifier`:
 
 ## Comparator Values
 
-Found in query filter `comparators`:
-- `0` = equals
-- `6` = contains
-- `9` = is between (for date ranges)
+Found in query filter `comparators` (metadata internal IDs — NOT the same as plist `Operator` values):
+- `0` = equals → plist Operator `0`
+- `6` = contains → plist Operator `99`
+- `9` = is between → plist Operator `1003`
+
+**Warning:** Using metadata comparator values directly as plist Operator values causes filters to be silently ignored. Always use the plist Operator values. See `docs/shortcuts-format.md` § "Title contains filter" for details.
 
 ## How to re-extract this data
 

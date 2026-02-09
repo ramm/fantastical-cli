@@ -134,6 +134,7 @@ EVENT_FIELDS = ["title", "startDate", "endDate", "calendar", "fantasticalURL"]
 
 
 RECORD_SEPARATOR = "\x1e"
+FIELD_SEPARATOR = "\x1f"
 
 
 def _parse_fields(parts: list[str]) -> dict:
@@ -151,15 +152,16 @@ def _parse_fields(parts: list[str]) -> dict:
     return item
 
 
-def parse_pipe_delimited(output: str) -> list[dict]:
-    """Parse pipe-delimited shortcut output into list of event dicts.
+def parse_shortcut_output(output: str) -> list[dict]:
+    """Parse shortcut output into list of event dicts.
 
-    Each record ends with ASCII Record Separator (0x1E), so fields can
-    safely contain newlines (e.g., multi-line locations, attendee lists).
-    Records are split on 0x1E first, then each record is split on pipe.
+    Fields are separated by ASCII Unit Separator (0x1F) — safe even when
+    event titles contain pipes.  Records are separated by ASCII Record
+    Separator (0x1E), so fields can safely contain newlines (e.g.,
+    multi-line locations, attendee lists).
 
     Expected format per record (matching EVENT_PROPS in shortcut_gen.py):
-    TITLE | START | END | CALENDAR\x1e
+    TITLE\x1fSTART\x1fEND\x1fCALENDAR\x1fURL\x1e
     """
     if not output:
         return []
@@ -172,21 +174,24 @@ def parse_pipe_delimited(output: str) -> list[dict]:
         if not record:
             continue
 
-        parts = record.split("|", num_fields - 1)
+        parts = record.split(FIELD_SEPARATOR, num_fields - 1)
         results.append(_parse_fields(parts))
 
     return results
 
 
-def get_events(from_date: str, to_date: str) -> list[dict]:
+def get_events(from_date: str, to_date: str, title_query: str = "") -> list[dict]:
     """Get events in a date range via CalendarItemQuery.
 
     Args:
         from_date: Start date as YYYY-MM-DD (inclusive).
         to_date: End date as YYYY-MM-DD (inclusive).
+        title_query: Optional title substring filter (server-side).
+            Empty string matches all events.
 
     Returns all events across ALL calendars within the requested range.
-    The shortcut receives the dates as input and queries Fantastical directly.
+    The shortcut receives the dates and title query as input and queries
+    Fantastical directly with server-side filtering.
 
     Note: CalendarItemQuery's "between" operator excludes the end date,
     so we add 1 day to make to_date inclusive from the caller's perspective.
@@ -195,9 +200,9 @@ def get_events(from_date: str, to_date: str) -> list[dict]:
 
     # Make end date inclusive: CalendarItemQuery "between" excludes end
     end_exclusive = (date.fromisoformat(to_date) + timedelta(days=1)).isoformat()
-    input_text = f"{from_date}|{end_exclusive}"
+    input_text = f"{from_date}|{end_exclusive}|{title_query}"
     output = run_shortcut("find_events", input_text=input_text)
-    return parse_pipe_delimited(output)
+    return parse_shortcut_output(output)
 
 
 def check_legacy_shortcuts() -> list[str]:

@@ -1,31 +1,35 @@
-"""Test passing date range as shortcut input for CalendarItemQuery.
+"""Test CalendarItemQuery with title contains filter.
 
-The production shortcut hardcodes ±14 days from Current Date. This experiment
-tests receiving start/end dates as input text and wiring them into the
-CalendarItemQuery filter via the proven Adjust Date laundering pattern.
+Goal: determine if we can combine date range + title filter in a single
+CalendarItemQuery, enabling one universal shortcut for both list and search.
+
+Questions to answer:
+1. Does `title contains "holiday"` work as a second filter template?
+2. Does `title contains ""` (empty string) match everything (= no-op)?
+3. Does input-driven title variable work in the filter Values?
+
+Input format: "YYYY-MM-DD|YYYY-MM-DD|titleQuery"
+  - Item 1: start date
+  - Item 2: end date
+  - Item 3: title query (may be empty)
 
 Shortcut flow:
-  Input: "2026-02-01|2026-02-15" via -i
-    → Split Text on "|" (Custom separator)
-    → Get Item At Index 1 → Detect Dates → Adjust Date +0d
-    → Get Item At Index 2 → Detect Dates → Adjust Date +0d
-    → CalendarItemQuery(startDate between adj1..adj2)
-    → Repeat → Text → Text wrap → Output
+  Input "2026-01-01|2026-03-15|holiday"
+    → Split Text on "|"
+    → Get Item 1 → Detect Dates → Adjust Date +0d (start)
+    → Get Item 2 → Detect Dates → Adjust Date +0d (end)
+    → Get Item 3 (title query text — no date detection needed)
+    → CalendarItemQuery(startDate between adj1..adj2 AND title contains item3)
+    → Repeat Each → delimited text → Text wrap → Output
 
-Key findings:
-- Split Text: WFTextSeparator="Custom" + WFTextCustomSeparator="|"
-  (setting WFTextSeparator directly to "|" is ignored)
-- Get Item from List: WFItemSpecifier="Item At Index" + WFItemIndex (1-based).
-  WFGetItemType (integer) is silently ignored.
-- CalendarItemQuery filter only works with Adjust Date action outputs
-  (proven in experiments 12-16). The +0 day adjustment launders the
-  Detect Dates output into the required format.
-
-Run: uv run python _experiments/18_input_dates.py
-Then: shortcuts run "claude-test-input" -i "2026-02-01|2026-02-15"
-
-On failure, check logs:
-  /usr/bin/log show --last 2m --predicate 'process == "BackgroundShortcutRunner"' --style compact
+Run: uv run python _experiments/19_title_filter.py
+Then:
+  # With title filter:
+  shortcuts run "claude-test-title-filter" -i "2026-01-01|2026-03-15|holiday"
+  # Empty title (should return all events in range):
+  shortcuts run "claude-test-title-filter" -i "2026-01-01|2026-03-15|"
+  # Compare baseline (no title filter, experiment 18):
+  shortcuts run "claude-test-input" -i "2026-01-01|2026-03-15"
 """
 import plistlib
 import subprocess
@@ -167,16 +171,12 @@ def _repeat_output_actions(query_uuid, props):
     ]
 
 
-def build_input_dates():
-    """Build shortcut that receives dates as input and uses them in query.
+def build_title_filter():
+    """Build shortcut with date range + title contains filter.
 
-    Flow:
-      Input "2026-02-01|2026-02-15"
-        → Split Text on "|" (Custom separator)
-        → Get Item At Index 1 → Detect Dates → Adjust Date +0d (start)
-        → Get Item At Index 2 → Detect Dates → Adjust Date +0d (end)
-        → CalendarItemQuery(startDate between start..end)
-        → output pipeline
+    Input: "YYYY-MM-DD|YYYY-MM-DD|titleQuery"
+    Split on "|" gives 3 items:
+      1 = start date, 2 = end date, 3 = title query
     """
     split_uuid = _uuid()
     get_item1_uuid = _uuid()
@@ -185,12 +185,11 @@ def build_input_dates():
     get_item2_uuid = _uuid()
     detect2_uuid = _uuid()
     adjust2_uuid = _uuid()
+    get_item3_uuid = _uuid()  # title query
     query_uuid = _uuid()
 
     actions = [
-        # 1. Split Text: split Shortcut Input on "|"
-        #    WFTextSeparator="Custom" + WFTextCustomSeparator="|"
-        #    (setting WFTextSeparator directly to "|" is silently ignored)
+        # 1. Split input on "|"
         {
             "WFWorkflowActionIdentifier": "is.workflow.actions.text.split",
             "WFWorkflowActionParameters": {
@@ -204,8 +203,7 @@ def build_input_dates():
             },
         },
 
-        # 2. Get Item At Index 1 from split list (start date string)
-        #    WFItemSpecifier="Item At Index" + WFItemIndex (1-based)
+        # --- Start date chain (item 1) ---
         {
             "WFWorkflowActionIdentifier": "is.workflow.actions.getitemfromlist",
             "WFWorkflowActionParameters": {
@@ -222,8 +220,6 @@ def build_input_dates():
                 },
             },
         },
-
-        # 3. Detect Dates from item 1
         {
             "WFWorkflowActionIdentifier": "is.workflow.actions.detect.date",
             "WFWorkflowActionParameters": {
@@ -238,9 +234,6 @@ def build_input_dates():
                 },
             },
         },
-
-        # 4. Adjust Date: add 0 days to detected start date
-        #    Launders into format CalendarItemQuery filter accepts
         {
             "WFWorkflowActionIdentifier": "is.workflow.actions.adjustdate",
             "WFWorkflowActionParameters": {
@@ -260,17 +253,13 @@ def build_input_dates():
                     "WFSerializationType": "WFTextTokenString",
                 },
                 "WFDuration": {
-                    "Value": {
-                        "Magnitude": "0",
-                        "Unit": "days",
-                    },
+                    "Value": {"Magnitude": "0", "Unit": "days"},
                     "WFSerializationType": "WFQuantityFieldValue",
                 },
             },
         },
 
-        # 5. Get Item At Index 2 from split list (end date string)
-        #    WFItemSpecifier="Item At Index" + WFItemIndex (1-based)
+        # --- End date chain (item 2) ---
         {
             "WFWorkflowActionIdentifier": "is.workflow.actions.getitemfromlist",
             "WFWorkflowActionParameters": {
@@ -287,8 +276,6 @@ def build_input_dates():
                 },
             },
         },
-
-        # 6. Detect Dates from item 2
         {
             "WFWorkflowActionIdentifier": "is.workflow.actions.detect.date",
             "WFWorkflowActionParameters": {
@@ -303,8 +290,6 @@ def build_input_dates():
                 },
             },
         },
-
-        # 7. Adjust Date: add 0 days to detected end date
         {
             "WFWorkflowActionIdentifier": "is.workflow.actions.adjustdate",
             "WFWorkflowActionParameters": {
@@ -323,16 +308,31 @@ def build_input_dates():
                     "WFSerializationType": "WFTextTokenString",
                 },
                 "WFDuration": {
-                    "Value": {
-                        "Magnitude": "0",
-                        "Unit": "days",
-                    },
+                    "Value": {"Magnitude": "0", "Unit": "days"},
                     "WFSerializationType": "WFQuantityFieldValue",
                 },
             },
         },
 
-        # 8. CalendarItemQuery with dynamic date filter
+        # --- Title query (item 3) — just get the text, no date detection ---
+        {
+            "WFWorkflowActionIdentifier": "is.workflow.actions.getitemfromlist",
+            "WFWorkflowActionParameters": {
+                "UUID": get_item3_uuid,
+                "WFItemSpecifier": "Item At Index",
+                "WFItemIndex": 3,
+                "WFInput": {
+                    "WFSerializationType": "WFTextTokenAttachment",
+                    "Value": {
+                        "Type": "ActionOutput",
+                        "OutputUUID": split_uuid,
+                        "OutputName": "Split Text",
+                    },
+                },
+            },
+        },
+
+        # --- CalendarItemQuery with BOTH date range AND title contains ---
         {
             "WFWorkflowActionIdentifier": f"{BUNDLE}.IntentCalendarItem",
             "WFWorkflowActionParameters": {
@@ -347,9 +347,10 @@ def build_input_dates():
                 "WFContentItemFilter": {
                     "WFSerializationType": "WFContentPredicateTableTemplate",
                     "Value": {
-                        "WFActionParameterFilterPrefix": 1,
+                        "WFActionParameterFilterPrefix": 1,  # AND
                         "WFContentPredicateBoundedDate": False,
                         "WFActionParameterFilterTemplates": [
+                            # Filter 1: startDate between adj1..adj2
                             {
                                 "Operator": 1003,
                                 "Property": "startDate",
@@ -374,19 +375,45 @@ def build_input_dates():
                                     },
                                 },
                             },
+                            # Filter 2: title contains <item3>
+                            # Operator 99 = "contains" (from Shortcuts.app plist extraction)
+                            # Values.String = WFTextTokenString referencing Get Item 3
+                            # Values.Unit = 4 (required alongside String)
+                            {
+                                "Operator": 99,
+                                "Property": "title",
+                                "Removable": True,
+                                "Values": {
+                                    "Unit": 4,
+                                    "String": {
+                                        "WFSerializationType": "WFTextTokenString",
+                                        "Value": {
+                                            "string": "\ufffc",
+                                            "attachmentsByRange": {
+                                                "{0, 1}": {
+                                                    "OutputUUID": get_item3_uuid,
+                                                    "Type": "ActionOutput",
+                                                    "OutputName": "Item from List",
+                                                },
+                                            },
+                                        },
+                                    },
+                                },
+                            },
                         ],
                     },
                 },
             },
         },
 
-        # 9-13. Repeat → Text → End Repeat → Text wrap → Output
+        # --- Output pipeline ---
         *_repeat_output_actions(query_uuid, OUTPUT_PROPS),
     ]
 
     return {
         "WFQuickActionSurfaces": [],
         "WFWorkflowActions": actions,
+        "WFWorkflowClientVersion": "4046.0.2.2",
         "WFWorkflowHasOutputFallback": False,
         "WFWorkflowHasShortcutInputVariables": True,
         "WFWorkflowIcon": {
@@ -403,15 +430,23 @@ def build_input_dates():
 
 
 if __name__ == "__main__":
-    print("=== Experiment 18: Input dates for CalendarItemQuery ===")
+    print("=== Experiment 19: CalendarItemQuery with title contains filter ===")
     print()
 
-    plist = build_input_dates()
-    _sign("claude-test-input", plist)
+    plist = build_title_filter()
+    _sign("claude-test-title-filter", plist)
 
     print()
     print("=== Test commands ===")
-    print('shortcuts run "claude-test-input" -i "2026-02-01|2026-02-15"')
+    print()
+    print("# Test 1: title filter with a known match")
+    print('shortcuts run "claude-test-title-filter" -i "2026-01-01|2026-03-15|holiday"')
+    print()
+    print("# Test 2: empty title (should return ALL events in range)")
+    print('shortcuts run "claude-test-title-filter" -i "2026-01-01|2026-03-15|"')
+    print()
+    print("# Test 3: compare with experiment 18 baseline (no title filter)")
+    print('shortcuts run "claude-test-input" -i "2026-01-01|2026-03-15"')
     print()
     print("On failure, check logs:")
     print('/usr/bin/log show --last 2m --predicate \'process == "BackgroundShortcutRunner"\' --style compact')
