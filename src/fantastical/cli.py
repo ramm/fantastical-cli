@@ -319,7 +319,7 @@ def setup(force):
         click.pause("  Press any key to run the test...")
 
     try:
-        events = api.show_schedule("today")
+        events = api.list_events(from_date="today", to_date="today")
         click.echo()
         if events:
             click.secho(f"  Got {len(events)} event(s) for today.", fg="green")

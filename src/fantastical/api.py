@@ -200,14 +200,6 @@ def search_events(query: str) -> list[dict]:
     return _get_events_for_range(from_iso, to_iso, title_query=query)
 
 
-def show_schedule(date_str: str = "today") -> list[dict]:
-    """Show the schedule for a given date.
-
-    Requires shortcuts.
-    """
-    resolved = _resolve_date(date_str)
-    return _get_events_for_range(resolved, resolved)
-
 
 def check_setup() -> dict[str, bool]:
     """Check which helper shortcuts are installed.

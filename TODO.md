@@ -92,13 +92,9 @@ Title filter added to CalendarItemQuery (Operator 99, `title contains`). Both `l
 `api.py:128` catches `(JXAError, Exception)` — `Exception` is a superclass of `JXAError`, making `JXAError` redundant. Decide the right scope: `except Exception` if the intent is "never crash on enrichment", or narrow to `except (JXAError, KeyError)` if the intent was to catch JXA failures and dict comprehension issues specifically. The broad `except Exception` silently swallows unexpected bugs — narrowing it would surface real problems while still tolerating JXA timeouts.
 
 
-## SHOWSCHEDULE — Remove redundant `show_schedule()` function
+## ~~SHOWSCHEDULE — Remove redundant `show_schedule()` function~~ ✓ RESOLVED
 
-**Priority:** P3
-
-`api.show_schedule(date_str)` is identical to `api.list_events(from_date=date_str, to_date=date_str)` — it just calls `_get_events_for_range(resolved, resolved)`. It's a vestige of the old `FKRShowScheduleIntent` shortcut (now in `LEGACY_SHORTCUTS`). No CLI command or MCP tool exposes it. Only caller is `cli.py:322` during setup's test step.
-
-**Fix:** Replace `api.show_schedule("today")` in `cli.py:322` with `api.list_events(from_date="today", to_date="today")`, then delete `show_schedule()` from `api.py`.
+Replaced `api.show_schedule("today")` with `api.list_events(from_date="today", to_date="today")` in cli.py setup test. Deleted `show_schedule()` from api.py.
 
 
 ## MCP — MCP server testing
