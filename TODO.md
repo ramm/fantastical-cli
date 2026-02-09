@@ -78,11 +78,9 @@ Title filter added to CalendarItemQuery (Operator 99, `title contains`). Both `l
 **Fix:** Replace the re-exported dicts with proper API functions, e.g. `api.get_shortcut_status()` returning `[{"key": "find_events", "name": "Fantastical - Find Events", "installed": True}]`. Remove `SHORTCUTS`/`LEGACY_SHORTCUTS` from api.py's public surface. Update `setup()` and `uninstall()` in cli.py to use the new API.
 
 
-## ADD-OUTPUT — `add` command doesn't use `_output()` helper
+## ~~ADD-OUTPUT — `add` command doesn't use `_output()` helper~~ ✓ RESOLVED
 
-**Priority:** P3
-
-`cli.py:176-179` rolls its own JSON output instead of using `_output()` like every other command. Missing `default=str` kwarg. Refactor to use `_output()` with a small format function for the human-readable "Event sent to Fantastical: ..." message.
+Refactored `add` command to use `_output()` like every other command.
 
 
 ## ~~CALMAP-EXCEPT — Fix redundant exception handling in `_get_calendar_map`~~ ✓ RESOLVED

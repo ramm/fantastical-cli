@@ -173,13 +173,13 @@ def search(ctx, query):
 @click.pass_context
 def add(ctx, sentence, calendar, notes):
     """Create event using natural language (e.g. 'Meeting tomorrow at 3pm')."""
+    def _format_add(data):
+        click.secho("Event sent to Fantastical: ", fg="green", nl=False)
+        click.echo(sentence)
+
     try:
         result = api.create_event(sentence, calendar, notes)
-        if ctx.obj["json"]:
-            click.echo(json.dumps(result, indent=2))
-        else:
-            click.secho("Event sent to Fantastical: ", fg="green", nl=False)
-            click.echo(sentence)
+        _output(result, ctx.obj["json"], _format_add)
     except Exception as e:
         _handle_error(e)
 
