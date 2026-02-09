@@ -62,11 +62,9 @@ No edit/update capability exists yet. Fantastical's 16 App Intents are all read-
 Title filter added to CalendarItemQuery (Operator 99, `title contains`). Both `list_events` and `search_events` now use one shortcut with server-side filtering. Input format: `start|end|titleQuery` (empty title = no-op). Python-side title filtering removed from `search_events()`.
 
 
-## PKGNAME — Package name `fantastical-mcp` doesn't match the project
+## ~~PKGNAME — Package name `fantastical-mcp` doesn't match the project~~ ✓ RESOLVED
 
-**Priority:** P3
-
-`pyproject.toml` names the package `fantastical-mcp`, suggesting a standalone MCP server. But the project is CLI-first: `cli.py` is 404 lines with interactive setup, `server.py` is a 43-line wrapper, README leads with CLI usage, entry point is `fantastical.cli:cli`. Consider renaming to `fantastical-cli` or just `fantastical` if available.
+Renamed package from `fantastical-mcp` to `fantastical-cli` in pyproject.toml.
 
 
 ## ~~LAYER — Backend constants `SHORTCUTS`/`LEGACY_SHORTCUTS` leak through API to CLI~~ ✓ RESOLVED
