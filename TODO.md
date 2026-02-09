@@ -113,11 +113,9 @@ No test suite. Testable pure-Python functions:
 - `api.list_events` — date range cap, calendar name filtering
 
 
-## IMPORTS — Move inline stdlib imports to top of `cli.py`
+## ~~IMPORTS — Move inline stdlib imports to top of `cli.py`~~ ✓ RESOLVED
 
-**Priority:** P3
-
-`cli.py:382` imports `subprocess` and `cli.py:389` imports `time` inline in the `uninstall` command. These are standard library modules with no reason to defer — unlike the `shortcut_gen` imports in `setup()` which are intentionally lazy to avoid loading heavy modules. Move `subprocess` and `time` to the top-level imports for consistency.
+Moved `subprocess` and `time` to top-level imports in cli.py.
 
 
 ## CLEANUP — Clean up test shortcuts

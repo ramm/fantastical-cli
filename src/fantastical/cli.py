@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
+import time
 from datetime import date, timedelta
 
 import click
@@ -379,14 +381,12 @@ def uninstall():
         ids = api.get_installed_shortcut_ids()
     except Exception:
         # If JXA lookup fails, open Shortcuts.app generically
-        import subprocess
         click.echo("Could not look up shortcut IDs. Opening Shortcuts.app...")
         subprocess.run(["open", "-a", "Shortcuts"], check=True)
         click.echo()
         click.echo("Please search for shortcuts prefixed with \"Fantastical - \" and delete them.")
         return
 
-    import time
     for name, shortcut_id in ids.items():
         click.echo(f"  Opening: {name}")
         api.open_shortcut(shortcut_id)
