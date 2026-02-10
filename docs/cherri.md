@@ -68,7 +68,7 @@ Entity query filters use:
 - `Operator` (e.g., `1003` for "is between") — not `WFCondition`
 - `Values` dict (e.g., `{Unit: 4, Date: "...", AnotherDate: "..."}`) — not `WFConditionalActionString`/`WFNumberValue`
 
-This means the Cherri source cannot tell us whether `Values.Date`/`Values.AnotherDate` accept dynamic `WFTextTokenString` variable references. The extracted CalendarItemQuery plist had plain date strings, and this remains an open question (see TODO.md P1).
+This means the Cherri source cannot tell us whether `Values.Date`/`Values.AnotherDate` accept dynamic variable references. This has since been resolved: dynamic dates work via `WFTextTokenAttachment` refs (not `WFTextTokenString`), with the critical requirement that `WFDuration` uses **string** values for `Magnitude`/`Unit`. See AGENTS.md key discoveries.
 
 ### attachmentValues() encoding pipeline
 

@@ -67,21 +67,17 @@ Shortcuts are generated as binary plists, signed via `shortcuts sign --mode anyo
 | Name | Intent / Query | Purpose | Status |
 |------|---------------|---------|--------|
 | `Fantastical - Find Events` | `CalendarItemQuery` (IntentCalendarItem) | Events across ALL calendars | **Working** — end-to-end verified |
-| `Fantastical - Show Schedule` (legacy) | `FKRShowScheduleIntent` | Events for a given date | Works but only one calendar set |
 
 The find events shortcut flow: Input "start|end|titleQuery" → Split Text → Get Item 1 → Detect Dates → Adjust Date +0d → Get Item 2 → Detect Dates → Adjust Date +0d → Get Item 3 (title query) → CalendarItemQuery(startDate between adj1..adj2 AND title contains item3) → Repeat Each → delimited text (title`\x1f`start`\x1f`end`\x1f`cal`\x1f`fantasticalURL) → Text wrap → Output. Fields use ASCII Unit Separator (0x1F); records end with Record Separator (0x1E). The caller passes the exact date range and optional title query as shortcut input; empty title = no-op (matches all events). Both `list_events` and `search_events` use this single shortcut — search passes the query string for server-side filtering.
 
 **Key discoveries:**
 - Dynamic dates in CalendarItemQuery `Values.Date`/`Values.AnotherDate` ARE possible using Adjust Date action outputs with `WFTextTokenAttachment` refs. The critical requirement is that `WFDuration` must use **string values** (`Magnitude: "14"`, `Unit: "days"`), NOT integers. Using integers silently breaks the Adjust Date output, causing the CalendarItemQuery to return 0 items without crashing. Discovered by extracting a working plist from a shortcut created in Shortcuts.app UI.
 - **Output action taint tracking:** Data from third-party apps is "tainted" — Output action refuses to emit it directly (`WFActionErrorDomain Code=4`, "missing an appIdentifier"). **Fix:** wrap Repeat Results in a Text action before Output to "launder" the data through a built-in action.
-- **`attendees` property CRASHES** BackgroundShortcutRunner — `IntentAttendee` entities don't support text coercion via `if_map:`. Do NOT include `attendees` in `EVENT_PROPS`.
 - `EVENT_PROPS` = `["title", "startDate", "endDate", "calendarIdentifier", "fantasticalURL"]`. The `fantasticalURL` is a deep link back into Fantastical; it includes `calendarIdentifier` in the URL, so it's unique per calendar copy (not a cross-calendar dedup key).
 - Date format from Shortcuts is localized: "12 Feb 2026 at 12:00" — parser handles this.
 - Caller passes exact date range. No hard cap — MCP tool descriptions guide agents to start with 2-week chunks and widen if the calendar is sparse.
 - **WFDuration gotcha:** The Adjust Date action's `WFDuration` must use **string** values for `Magnitude` and `Unit` (e.g., `"14"` and `"days"`). Using integers (e.g., `14` and `4`) silently produces broken output that causes CalendarItemQuery to return 0 items. This was the root cause of 7 failed dynamic date experiments before extracting a working plist from Shortcuts.app.
 - **`WFWorkflowClientVersion` is required** for dynamic variable resolution in entity query filters. Without `"WFWorkflowClientVersion": "4046.0.2.2"` in the top-level plist, freshly-generated shortcuts with variable dates in CalendarItemQuery filters silently return 0 items. Shortcuts.app always includes this key; we must add it explicitly in `_build_shortcut_plist()`.
-
-**Historical note:** The previous `FKRShowScheduleIntent` approach only returned events from the active/default calendar set — events from other calendars were silently omitted. CalendarItemQuery queries ALL calendars.
 
 **Calendar name enrichment:** `api._get_events_for_range()` calls `_get_calendar_map()` (JXA) to build a `calendarIdentifier → calendarName` map, then enriches each event with `calendarName`. This is best-effort — if JXA times out, events still have the raw `calendarIdentifier`. The `--calendar` filter in `list_events()` matches on both `calendarName` and raw `calendarIdentifier`.
 

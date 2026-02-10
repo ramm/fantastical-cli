@@ -11,11 +11,13 @@ Renamed `EVENT_FIELDS[3]` from `"calendar"` to `"calendarIdentifier"` in `shortc
 
 **Priority:** P1
 
-Currently `EVENT_PROPS` has 5 fields (title, startDate, endDate, calendarIdentifier, fantasticalURL). Attendee data is missing — accessing `Repeat Item.attendees` via property aggrandizement crashes BackgroundShortcutRunner (`IntentAttendee` doesn't support text coercion).
+Currently `EVENT_PROPS` has 5 fields (title, startDate, endDate, calendarIdentifier, fantasticalURL). Attendee data is missing.
+
+**Why not just add `attendees` to `EVENT_PROPS`:** Accessing `Repeat Item.attendees` via property aggrandizement (`if_map:` / `WFContentItemPropertyName`) crashes BackgroundShortcutRunner — `IntentAttendee` entities don't support text coercion. This is a Shortcuts runtime limitation, not a Fantastical bug.
 
 **Approach:** Use `FKRGetAttendeesFromEventIntent` ("Get Invitees from Event") — a dedicated intent that takes an event and returns attendees. Chain: Find Events → Repeat Each → Get Invitees → format. This also requires solving the If/Otherwise/End If action format on macOS 15+ (to guard nil values), which hasn't worked yet. Both problems will be addressed together during implementation. Note: `_if_has_value_start()`, `_if_otherwise()`, and `_if_end()` helpers already exist in `shortcut_gen.py` (lines 206-256) — untested, may need adjustment.
 
-See `AGENTS.md` and `docs/shortcuts-format.md` for crash details and the reverse-engineering approach for If actions.
+See `docs/shortcuts-format.md` for crash details and the reverse-engineering approach for If actions.
 
 
 ## EDIT — Edit existing events
