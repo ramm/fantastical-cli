@@ -38,4 +38,4 @@ def test_output_parsed(mock_run):
     result = get_events("2026-02-09", "2026-02-10")
     assert len(result) == 1
     assert result[0]["title"] == "Meeting"
-    assert result[0]["calendar"] == "Cal"
+    assert result[0]["calendarIdentifier"] == "Cal"

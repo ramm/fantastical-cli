@@ -98,7 +98,7 @@ async def test_list_events_all_args(mock_le):
 async def test_list_events_compact_output(mock_le):
     events = [
         {"title": "Standup", "startDate": "9 Feb 2026 at 10:00", "endDate": "9 Feb 2026 at 10:30",
-         "calendar": "cal1", "fantasticalURL": "x-fantastical3://show/1"},
+         "calendarIdentifier": "cal1", "fantasticalURL": "x-fantastical3://show/1"},
     ]
     mock_le.return_value = events
     result = await mcp.call_tool("list_events", {"from_date": "2026-02-09"})
@@ -118,14 +118,14 @@ async def test_list_events_compact_output(mock_le):
 async def test_list_events_caches_events(mock_le):
     events = [
         {"title": "Standup", "startDate": "9 Feb 2026 at 10:00", "endDate": "9 Feb 2026 at 10:30",
-         "calendar": "cal1", "fantasticalURL": "x-fantastical3://show/1"},
+         "calendarIdentifier": "cal1", "fantasticalURL": "x-fantastical3://show/1"},
     ]
     mock_le.return_value = events
     await mcp.call_tool("list_events", {"from_date": "2026-02-09"})
     assert len(_event_cache) == 1
     cached = list(_event_cache.values())[0]
     assert cached["title"] == "Standup"
-    assert cached["calendar"] == "cal1"
+    assert cached["calendarIdentifier"] == "cal1"
     assert cached["fantasticalURL"] == "x-fantastical3://show/1"
     assert "id" in cached
 
@@ -134,7 +134,7 @@ async def test_list_events_caches_events(mock_le):
 
 
 def test_hash_event_uses_url_when_present():
-    ev = {"title": "A", "startDate": "s", "endDate": "e", "calendar": "c1",
+    ev = {"title": "A", "startDate": "s", "endDate": "e", "calendarIdentifier": "c1",
           "fantasticalURL": "x-fantastical3://show/1"}
     h = _hash_event(ev)
     assert len(h) == 8
@@ -144,16 +144,16 @@ def test_hash_event_uses_url_when_present():
 
 
 def test_hash_event_falls_back_to_title_dates():
-    ev = {"title": "A", "startDate": "s", "endDate": "e", "calendar": "c1",
+    ev = {"title": "A", "startDate": "s", "endDate": "e", "calendarIdentifier": "c1",
           "fantasticalURL": None}
     h = _hash_event(ev)
     assert len(h) == 8
 
 
 def test_hash_event_different_calendars():
-    ev1 = {"title": "A", "startDate": "s", "endDate": "e", "calendar": "c1",
+    ev1 = {"title": "A", "startDate": "s", "endDate": "e", "calendarIdentifier": "c1",
            "fantasticalURL": None}
-    ev2 = {"title": "A", "startDate": "s", "endDate": "e", "calendar": "c2",
+    ev2 = {"title": "A", "startDate": "s", "endDate": "e", "calendarIdentifier": "c2",
            "fantasticalURL": None}
     assert _hash_event(ev1) != _hash_event(ev2)
 
@@ -163,8 +163,8 @@ def test_hash_event_different_calendars():
 
 def test_cache_and_compact_format():
     events = [
-        {"title": "Ev1", "startDate": "s1", "endDate": "e1", "calendar": "c", "fantasticalURL": "url1"},
-        {"title": "Ev2", "startDate": "s2", "endDate": "e2", "calendar": "c", "fantasticalURL": "url2"},
+        {"title": "Ev1", "startDate": "s1", "endDate": "e1", "calendarIdentifier": "c", "fantasticalURL": "url1"},
+        {"title": "Ev2", "startDate": "s2", "endDate": "e2", "calendarIdentifier": "c", "fantasticalURL": "url2"},
     ]
     output = _cache_and_compact(events)
     lines = output.strip().split("\n")
@@ -174,11 +174,11 @@ def test_cache_and_compact_format():
 
 
 def test_cache_and_compact_merges():
-    ev = {"title": "Ev1", "startDate": "s1", "endDate": "e1", "calendar": "c", "fantasticalURL": "url1"}
+    ev = {"title": "Ev1", "startDate": "s1", "endDate": "e1", "calendarIdentifier": "c", "fantasticalURL": "url1"}
     _cache_and_compact([ev])
     assert len(_event_cache) == 1
     # Call again with same event — no duplicate
-    ev2 = {"title": "Ev1", "startDate": "s1", "endDate": "e1", "calendar": "c",
+    ev2 = {"title": "Ev1", "startDate": "s1", "endDate": "e1", "calendarIdentifier": "c",
             "fantasticalURL": "url1", "calendarName": "Work"}
     _cache_and_compact([ev2])
     assert len(_event_cache) == 1
@@ -219,7 +219,7 @@ async def test_create_event_optional_args(mock_ce):
 @patch("fantastical.server.api.search_events")
 async def test_search_events_compact_output(mock_se):
     events = [{"title": "Team sync", "startDate": "s", "endDate": "e",
-               "calendar": "c", "fantasticalURL": "url"}]
+               "calendarIdentifier": "c", "fantasticalURL": "url"}]
     mock_se.return_value = events
     result = await mcp.call_tool("search_events", {"query": "sync"})
     mock_se.assert_called_once_with("sync", None, None)
@@ -247,14 +247,14 @@ async def test_search_events_with_dates(mock_se):
 @patch("fantastical.server.api.list_events")
 async def test_get_event_details_found(mock_le):
     events = [{"title": "Standup", "startDate": "s", "endDate": "e",
-               "calendar": "cal1", "fantasticalURL": "url1", "calendarName": "Work"}]
+               "calendarIdentifier": "cal1", "fantasticalURL": "url1", "calendarName": "Work"}]
     mock_le.return_value = events
     await mcp.call_tool("list_events", {"from_date": "2026-02-09"})
     eid = list(_event_cache.keys())[0]
     result = await mcp.call_tool("get_event_details", {"event_id": eid})
     text = _text(result)
     assert "title: Standup" in text
-    assert "calendar: cal1" in text
+    assert "calendarIdentifier: cal1" in text
     assert "calendarName: Work" in text
 
 
@@ -272,7 +272,7 @@ async def test_get_event_details_not_found():
 @patch("fantastical.server.api.list_events")
 async def test_clear_cache(mock_le):
     events = [{"title": "A", "startDate": "s", "endDate": "e",
-               "calendar": "c", "fantasticalURL": "u"}]
+               "calendarIdentifier": "c", "fantasticalURL": "u"}]
     mock_le.return_value = events
     await mcp.call_tool("list_events", {"from_date": "2026-02-09"})
     assert len(_event_cache) == 1
@@ -297,11 +297,11 @@ async def test_clear_cache_empty():
 async def test_parallel_list_events_no_duplicates(mock_le):
     """Two concurrent list_events returning overlapping events — no duplicate cache entries."""
     shared_event = {"title": "Shared", "startDate": "s", "endDate": "e",
-                    "calendar": "c", "fantasticalURL": "shared-url"}
+                    "calendarIdentifier": "c", "fantasticalURL": "shared-url"}
     week1_only = {"title": "Week1", "startDate": "s1", "endDate": "e1",
-                  "calendar": "c", "fantasticalURL": "url-w1"}
+                  "calendarIdentifier": "c", "fantasticalURL": "url-w1"}
     week2_only = {"title": "Week2", "startDate": "s2", "endDate": "e2",
-                  "calendar": "c", "fantasticalURL": "url-w2"}
+                  "calendarIdentifier": "c", "fantasticalURL": "url-w2"}
 
     def side_effect(from_date, to_date, calendar):
         if from_date == "2026-02-01":
@@ -332,11 +332,11 @@ async def test_parallel_list_and_search_merge_cache(mock_le, mock_se):
     """Concurrent list_events + search_events both populate the same cache."""
     mock_le.return_value = [
         {"title": "Listed", "startDate": "s", "endDate": "e",
-         "calendar": "c", "fantasticalURL": "url-listed"},
+         "calendarIdentifier": "c", "fantasticalURL": "url-listed"},
     ]
     mock_se.return_value = [
         {"title": "Searched", "startDate": "s", "endDate": "e",
-         "calendar": "c", "fantasticalURL": "url-searched"},
+         "calendarIdentifier": "c", "fantasticalURL": "url-searched"},
     ]
 
     await asyncio.gather(
@@ -354,9 +354,9 @@ async def test_parallel_list_and_search_merge_cache(mock_le, mock_se):
 async def test_parallel_list_events_enriches_on_overlap(mock_le):
     """Second call returning same event with extra field updates the cache."""
     bare = {"title": "Ev", "startDate": "s", "endDate": "e",
-            "calendar": "c", "fantasticalURL": "url-ev"}
+            "calendarIdentifier": "c", "fantasticalURL": "url-ev"}
     enriched = {"title": "Ev", "startDate": "s", "endDate": "e",
-                "calendar": "c", "fantasticalURL": "url-ev", "calendarName": "Work"}
+                "calendarIdentifier": "c", "fantasticalURL": "url-ev", "calendarName": "Work"}
 
     call_count = 0
 
@@ -386,9 +386,9 @@ async def test_parallel_list_events_enriches_on_overlap(mock_le):
 async def test_get_event_details_consistent_after_parallel_writes(mock_le):
     """get_event_details returns coherent data even after parallel cache writes."""
     events_a = [{"title": f"A{i}", "startDate": f"s{i}", "endDate": f"e{i}",
-                 "calendar": "c", "fantasticalURL": f"url-a{i}"} for i in range(20)]
+                 "calendarIdentifier": "c", "fantasticalURL": f"url-a{i}"} for i in range(20)]
     events_b = [{"title": f"B{i}", "startDate": f"s{i}", "endDate": f"e{i}",
-                 "calendar": "c", "fantasticalURL": f"url-b{i}"} for i in range(20)]
+                 "calendarIdentifier": "c", "fantasticalURL": f"url-b{i}"} for i in range(20)]
 
     def side_effect(from_date, to_date, calendar):
         if from_date == "2026-01-01":
@@ -418,7 +418,7 @@ async def test_clear_cache_during_reads(mock_le):
     """clear_cache between two list_events calls resets correctly."""
     mock_le.return_value = [
         {"title": "Ev", "startDate": "s", "endDate": "e",
-         "calendar": "c", "fantasticalURL": "url-ev"},
+         "calendarIdentifier": "c", "fantasticalURL": "url-ev"},
     ]
 
     await mcp.call_tool("list_events", {"from_date": "2026-02-09"})
@@ -443,7 +443,7 @@ def test_cache_and_compact_threaded_consistency():
     """Hammer _cache_and_compact from multiple threads — cache stays consistent."""
     batches = [
         [{"title": f"T{t}E{i}", "startDate": f"s{i}", "endDate": f"e{i}",
-          "calendar": "c", "fantasticalURL": f"url-t{t}-e{i}"}
+          "calendarIdentifier": "c", "fantasticalURL": f"url-t{t}-e{i}"}
          for i in range(50)]
         for t in range(4)
     ]
@@ -476,7 +476,7 @@ def test_cache_and_compact_threaded_consistency():
 def test_threaded_same_event_150_writes():
     """3 threads each write the same event 50 times — exactly 1 cache entry."""
     event = {"title": "Daily", "startDate": "9 Feb 2026 at 09:00",
-             "endDate": "9 Feb 2026 at 09:30", "calendar": "c1",
+             "endDate": "9 Feb 2026 at 09:30", "calendarIdentifier": "c1",
              "fantasticalURL": "x-fantastical3://show/daily"}
     expected_id = _hash_event(event)
 

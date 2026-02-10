@@ -149,7 +149,7 @@ def _get_events_for_range(from_iso: str, to_iso: str, title_query: str = "") -> 
         if ev_start is not None and (ev_start < start or ev_start > end):
             continue
         if cal_map:
-            ev["calendarName"] = cal_map.get(ev.get("calendar"), None)
+            ev["calendarName"] = cal_map.get(ev.get("calendarIdentifier"), None)
         filtered.append(ev)
 
     return filtered
@@ -174,7 +174,7 @@ def list_events(
         cal_lower = calendar.lower()
         events = [e for e in events
                   if cal_lower in ((e.get("calendarName") or "").lower(),
-                                   (e.get("calendar") or "").lower())]
+                                   (e.get("calendarIdentifier") or "").lower())]
 
     return events
 

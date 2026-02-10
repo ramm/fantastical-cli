@@ -130,7 +130,7 @@ def run_shortcut(key: str, input_text: str | None = None) -> str:
 
 
 # Field names matching EVENT_PROPS order in shortcut_gen.py
-EVENT_FIELDS = ["title", "startDate", "endDate", "calendar", "fantasticalURL"]
+EVENT_FIELDS = ["title", "startDate", "endDate", "calendarIdentifier", "fantasticalURL"]
 
 
 RECORD_SEPARATOR = "\x1e"

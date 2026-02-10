@@ -2,23 +2,9 @@
 
 > **This file is for issues, problems, and action plans only.** Do not add development notes, workflow tips, reference material, or general documentation here — those belong in `AGENTS.md` or `docs/`.
 
-## CALFIELD — Rename misleading `calendar` field to `calendarIdentifier`
+## ~~CALFIELD — Rename misleading `calendar` field to `calendarIdentifier`~~ ✓ RESOLVED
 
-**Priority:** P1
-
-`shortcut_gen.py:309` outputs the Fantastical property `calendarIdentifier` (an opaque ID), but `shortcuts.py:129` parses it into a dict key named `calendar`:
-
-```
-EVENT_PROPS  = [..., "calendarIdentifier", ...]   # shortcut_gen.py — actual property
-EVENT_FIELDS = [..., "calendar",           ...]   # shortcuts.py   — parsed dict key
-```
-
-Anyone reading `ev["calendar"]` would expect a human-readable name, not a UUID. The API then does `cal_map.get(ev.get("calendar"))` which only works because `calendar` secretly holds an identifier. The `--calendar` CLI filter (`api.py:179-182`) accidentally matches on the raw identifier too.
-
-**Fix:** Rename `EVENT_FIELDS[3]` from `"calendar"` to `"calendarIdentifier"` in `shortcuts.py:129`, then update all references:
-- `api.py:152` — `ev.get("calendar")` → `ev.get("calendarIdentifier")`
-- `api.py:181-182` — calendar filter to match on `calendarName` and `calendarIdentifier`
-- `cli.py:54` — `ev.get("calendar", "")` → `ev.get("calendarIdentifier", "")`
+Renamed `EVENT_FIELDS[3]` from `"calendar"` to `"calendarIdentifier"` in `shortcuts.py`. Updated all references in `api.py`, `cli.py`, `server.py`, and all tests.
 
 
 ## ATTENDEES — Enrich event data with attendees and emails

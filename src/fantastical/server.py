@@ -21,7 +21,7 @@ _cache_lock = threading.Lock()       # thread-safe for parallel tool calls
 
 def _hash_event(event: dict) -> str:
     """Short stable ID. Includes calendar to distinguish cross-calendar duplicates."""
-    cal = event.get("calendar") or ""
+    cal = event.get("calendarIdentifier") or ""
     url = event.get("fantasticalURL") or ""
     if url:
         key = f"{url}|{cal}"

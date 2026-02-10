@@ -18,7 +18,7 @@ def test_single_record():
         "title": "Meeting",
         "startDate": "9 Feb",
         "endDate": "9 Feb",
-        "calendar": "ID",
+        "calendarIdentifier": "ID",
         "fantasticalURL": "URL",
     }
 
@@ -36,7 +36,7 @@ def test_nil_becomes_none():
     result = parse_shortcut_output(output)
     assert result[0]["startDate"] is None
     assert result[0]["endDate"] is None
-    assert result[0]["calendar"] is None
+    assert result[0]["calendarIdentifier"] is None
     assert result[0]["fantasticalURL"] is None
 
 
@@ -57,7 +57,7 @@ def test_empty_field_becomes_none():
     result = parse_shortcut_output(output)
     assert result[0]["startDate"] is None
     assert result[0]["endDate"] is None
-    assert result[0]["calendar"] is None
+    assert result[0]["calendarIdentifier"] is None
     assert result[0]["fantasticalURL"] is None
 
 
@@ -74,7 +74,7 @@ def test_fewer_fields_than_expected():
     assert result[0]["title"] == "Title"
     assert result[0]["startDate"] == "Start"
     assert result[0]["endDate"] is None
-    assert result[0]["calendar"] is None
+    assert result[0]["calendarIdentifier"] is None
     assert result[0]["fantasticalURL"] is None
 
 
@@ -102,7 +102,7 @@ def test_whitespace_around_values():
     assert result[0]["title"] == "Title"
     assert result[0]["startDate"] == "Start"
     assert result[0]["endDate"] == "End"
-    assert result[0]["calendar"] == "Cal"
+    assert result[0]["calendarIdentifier"] == "Cal"
     assert result[0]["fantasticalURL"] == "URL"
 
 
@@ -115,7 +115,7 @@ def test_parse_fields_empty_list():
         "title": None,
         "startDate": None,
         "endDate": None,
-        "calendar": None,
+        "calendarIdentifier": None,
         "fantasticalURL": None,
     }
 
@@ -125,7 +125,7 @@ def test_parse_fields_partial():
     assert result["title"] == "Title"
     assert result["startDate"] == "Start"
     assert result["endDate"] is None
-    assert result["calendar"] is None
+    assert result["calendarIdentifier"] is None
     assert result["fantasticalURL"] is None
 
 
@@ -135,7 +135,7 @@ def test_parse_fields_full():
         "title": "T",
         "startDate": "S",
         "endDate": "E",
-        "calendar": "C",
+        "calendarIdentifier": "C",
         "fantasticalURL": "U",
     }
 

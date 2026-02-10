@@ -112,8 +112,8 @@ def test_list_events_wide_range(mock_get):
 @patch("fantastical.api._get_events_for_range")
 def test_list_events_calendar_filter(mock_get):
     mock_get.return_value = [
-        {"title": "A", "calendarName": "Work", "calendar": "id1"},
-        {"title": "B", "calendarName": "Personal", "calendar": "id2"},
+        {"title": "A", "calendarName": "Work", "calendarIdentifier": "id1"},
+        {"title": "B", "calendarName": "Personal", "calendarIdentifier": "id2"},
     ]
     result = list_events(from_date="today", calendar="Work")
     assert len(result) == 1
@@ -123,7 +123,7 @@ def test_list_events_calendar_filter(mock_get):
 @patch("fantastical.api._get_events_for_range")
 def test_list_events_calendar_filter_case_insensitive(mock_get):
     mock_get.return_value = [
-        {"title": "A", "calendarName": "Work", "calendar": "id1"},
+        {"title": "A", "calendarName": "Work", "calendarIdentifier": "id1"},
     ]
     result = list_events(from_date="today", calendar="work")
     assert len(result) == 1
@@ -132,7 +132,7 @@ def test_list_events_calendar_filter_case_insensitive(mock_get):
 @patch("fantastical.api._get_events_for_range")
 def test_list_events_calendar_filter_id(mock_get):
     mock_get.return_value = [
-        {"title": "A", "calendarName": None, "calendar": "abc123"},
+        {"title": "A", "calendarName": None, "calendarIdentifier": "abc123"},
     ]
     result = list_events(from_date="today", calendar="abc123")
     assert len(result) == 1
@@ -141,7 +141,7 @@ def test_list_events_calendar_filter_id(mock_get):
 @patch("fantastical.api._get_events_for_range")
 def test_list_events_no_calendar_match(mock_get):
     mock_get.return_value = [
-        {"title": "A", "calendarName": "Work", "calendar": "id1"},
+        {"title": "A", "calendarName": "Work", "calendarIdentifier": "id1"},
     ]
     result = list_events(from_date="today", calendar="Nonexistent")
     assert result == []
@@ -221,7 +221,7 @@ def test_search_wide_range(mock_get):
 @patch("fantastical.api._run_shortcut_or_raise")
 def test_get_events_enriches_calendar(mock_run, mock_cal_map):
     mock_run.return_value = [
-        {"title": "Ev", "startDate": "2026-02-09 10:00:00", "calendar": "cal-id-1"},
+        {"title": "Ev", "startDate": "2026-02-09 10:00:00", "calendarIdentifier": "cal-id-1"},
     ]
     mock_cal_map.return_value = {"cal-id-1": "Work"}
     result = _get_events_for_range("2026-02-09", "2026-02-09")
@@ -232,7 +232,7 @@ def test_get_events_enriches_calendar(mock_run, mock_cal_map):
 @patch("fantastical.api._run_shortcut_or_raise")
 def test_get_events_empty_cal_map(mock_run, mock_cal_map):
     mock_run.return_value = [
-        {"title": "Ev", "startDate": "2026-02-09 10:00:00", "calendar": "cal-id-1"},
+        {"title": "Ev", "startDate": "2026-02-09 10:00:00", "calendarIdentifier": "cal-id-1"},
     ]
     mock_cal_map.return_value = {}
     result = _get_events_for_range("2026-02-09", "2026-02-09")
@@ -243,7 +243,7 @@ def test_get_events_empty_cal_map(mock_run, mock_cal_map):
 @patch("fantastical.api._run_shortcut_or_raise")
 def test_get_events_filters_out_of_range(mock_run, mock_cal_map):
     mock_run.return_value = [
-        {"title": "Before", "startDate": "2026-02-08 10:00:00", "calendar": "c"},
+        {"title": "Before", "startDate": "2026-02-08 10:00:00", "calendarIdentifier": "c"},
     ]
     mock_cal_map.return_value = {}
     result = _get_events_for_range("2026-02-09", "2026-02-10")
@@ -254,7 +254,7 @@ def test_get_events_filters_out_of_range(mock_run, mock_cal_map):
 @patch("fantastical.api._run_shortcut_or_raise")
 def test_get_events_includes_boundary(mock_run, mock_cal_map):
     mock_run.return_value = [
-        {"title": "OnStart", "startDate": "2026-02-09 08:00:00", "calendar": "c"},
+        {"title": "OnStart", "startDate": "2026-02-09 08:00:00", "calendarIdentifier": "c"},
     ]
     mock_cal_map.return_value = {}
     result = _get_events_for_range("2026-02-09", "2026-02-10")
@@ -266,7 +266,7 @@ def test_get_events_includes_boundary(mock_run, mock_cal_map):
 @patch("fantastical.api._run_shortcut_or_raise")
 def test_get_events_null_start_included(mock_run, mock_cal_map):
     mock_run.return_value = [
-        {"title": "NoDate", "startDate": None, "calendar": "c"},
+        {"title": "NoDate", "startDate": None, "calendarIdentifier": "c"},
     ]
     mock_cal_map.return_value = {}
     result = _get_events_for_range("2026-02-09", "2026-02-10")

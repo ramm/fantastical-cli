@@ -53,7 +53,7 @@ def _format_events(events: list[dict]):
         title = ev.get("title", "(no title)")
         start = ev.get("startDate", "")
         end = ev.get("endDate", "")
-        cal = ev.get("calendarName") or ev.get("calendar", "")
+        cal = ev.get("calendarName") or ev.get("calendarIdentifier", "")
         all_day = ev.get("isAllDay", False)
         location = ev.get("location")
 
