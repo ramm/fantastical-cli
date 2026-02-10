@@ -101,20 +101,12 @@ def test_list_events_default_range(mock_get):
 
 
 @patch("fantastical.api._get_events_for_range")
-def test_list_events_range_cap_ok(mock_get):
+def test_list_events_wide_range(mock_get):
     mock_get.return_value = []
     start = date.today().isoformat()
-    end = (date.today() + timedelta(days=365)).isoformat()
+    end = (date.today() + timedelta(days=500)).isoformat()
     list_events(from_date=start, to_date=end)
     mock_get.assert_called_once()
-
-
-@patch("fantastical.api._get_events_for_range")
-def test_list_events_range_cap_exceeded(mock_get):
-    start = date.today().isoformat()
-    end = (date.today() + timedelta(days=366)).isoformat()
-    with pytest.raises(FantasticalError, match="too large"):
-        list_events(from_date=start, to_date=end)
 
 
 @patch("fantastical.api._get_events_for_range")
@@ -213,18 +205,11 @@ def test_search_accepts_today_keyword(mock_get):
     assert args[0] == date.today().isoformat()
 
 
-def test_search_range_cap_exceeded():
-    start = date.today().isoformat()
-    end = (date.today() + timedelta(days=366)).isoformat()
-    with pytest.raises(FantasticalError, match="too large"):
-        search_events(query="test", from_date=start, to_date=end)
-
-
 @patch("fantastical.api._get_events_for_range")
-def test_search_range_cap_365_ok(mock_get):
+def test_search_wide_range(mock_get):
     mock_get.return_value = []
     start = date.today().isoformat()
-    end = (date.today() + timedelta(days=365)).isoformat()
+    end = (date.today() + timedelta(days=500)).isoformat()
     search_events(query="test", from_date=start, to_date=end)
     mock_get.assert_called_once()
 

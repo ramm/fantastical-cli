@@ -77,7 +77,7 @@ The find events shortcut flow: Input "start|end|titleQuery" → Split Text → G
 - **`attendees` property CRASHES** BackgroundShortcutRunner — `IntentAttendee` entities don't support text coercion via `if_map:`. Do NOT include `attendees` in `EVENT_PROPS`.
 - `EVENT_PROPS` = `["title", "startDate", "endDate", "calendarIdentifier", "fantasticalURL"]`. The `fantasticalURL` is a deep link back into Fantastical; it includes `calendarIdentifier` in the URL, so it's unique per calendar copy (not a cross-calendar dedup key).
 - Date format from Shortcuts is localized: "12 Feb 2026 at 12:00" — parser handles this.
-- Caller passes exact date range; ±90 days was too slow in early tests (~700+ events).
+- Caller passes exact date range. No hard cap — MCP tool descriptions guide agents to start with 2-week chunks and widen if the calendar is sparse.
 - **WFDuration gotcha:** The Adjust Date action's `WFDuration` must use **string** values for `Magnitude` and `Unit` (e.g., `"14"` and `"days"`). Using integers (e.g., `14` and `4`) silently produces broken output that causes CalendarItemQuery to return 0 items. This was the root cause of 7 failed dynamic date experiments before extracting a working plist from Shortcuts.app.
 - **`WFWorkflowClientVersion` is required** for dynamic variable resolution in entity query filters. Without `"WFWorkflowClientVersion": "4046.0.2.2"` in the top-level plist, freshly-generated shortcuts with variable dates in CalendarItemQuery filters silently return 0 items. Shortcuts.app always includes this key; we must add it explicitly in `_build_shortcut_plist()`.
 

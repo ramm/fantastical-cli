@@ -62,7 +62,7 @@ async def list_events(from_date: str = "today", to_date: str | None = None, cale
     """List calendar events in a date range (YYYY-MM-DD).
 
     Accepts 'today', 'tomorrow', 'yesterday', or YYYY-MM-DD. Defaults to today only.
-    Max 365 days. Ranges >1 month may be slow — recommend 2-week chunks.
+    Start with 2-week chunks. If results are sparse, increase to months or more.
 
     Returns compact tab-separated output: id, title, startDate, endDate.
     All events are cached — use get_event_details for full data (calendar, URL, etc.).
@@ -88,7 +88,8 @@ async def search_events(
     """Search events by title.
 
     Default search window is ±30 days. Override with from_date/to_date (YYYY-MM-DD).
-    Max 365 days. Same compact tab-separated output as list_events with caching.
+    Start with 2-week chunks. If results are sparse, increase to months or more.
+    Same compact tab-separated output as list_events with caching.
     Can be called in parallel for different queries.
     """
     data = await asyncio.to_thread(api.search_events, query, from_date, to_date)
