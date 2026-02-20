@@ -844,7 +844,7 @@ Lunch␟8 Feb 2026 at 12:00␟8 Feb 2026 at 13:00␟2aab12d3...␟x-fantastical:
 
 Current fields (matching `EVENT_PROPS` in `shortcut_gen.py`):
 1. `title`
-2. `startDate` — localized format: "12 Feb 2026 at 12:00"
+2. `startDate` — currently parsed as English month format: "12 Feb 2026 at 12:00" (non-English locale month names are not supported yet)
 3. `endDate`
 4. `calendarIdentifier` — hex hash, mapped to `calendarName` by `api._get_calendar_map()`
 5. `fantasticalURL` — deep link back to event in Fantastical

@@ -7,6 +7,89 @@
 Renamed `EVENT_FIELDS[3]` from `"calendar"` to `"calendarIdentifier"` in `shortcuts.py`. Updated all references in `api.py`, `cli.py`, `server.py`, and all tests.
 
 
+## LAYER-SETUP — `cli.setup` bypasses `api.py` and imports backend directly
+
+**Priority:** P2
+
+`AGENTS.md` layer rules require `cli.py` to call only `api.py`, but `cli.setup` currently imports `generate_shortcut_file` and `import_shortcut` from `backend/shortcut_gen.py` directly.
+
+This duplicates backend orchestration in two places (`api.setup_shortcuts()` and `cli.setup`) and weakens the API as the single source of truth.
+
+**Fix plan:**
+1. Add API-level setup primitives that keep backend calls inside `api.py` while still allowing per-shortcut progress UX in CLI.
+2. Refactor `cli.setup` to call those API functions only (no backend imports in `cli.py`).
+3. Add/adjust tests to enforce the layer boundary for setup flow.
+
+
+## CLI-SETUP-CMD — `setup` success message prints invalid `events` command
+
+**Priority:** P3
+
+The setup completion message suggests:
+`fantastical events --from 2026-01-01 --to 2026-01-31`
+
+But `--from/--to` are options on `events list`, not on the `events` group. The correct command is:
+`fantastical events list --from 2026-01-01 --to 2026-01-31`
+
+**Fix plan:**
+1. Update the printed command in `cli.setup` to include `list`.
+2. Add/adjust a CLI output test to prevent this regression.
+
+
+## DOCS-NAME — README still uses old `fantastical-mcp` name/paths
+
+**Priority:** P3
+
+The canonical project name is `fantastical-cli` (package + repo), but README still contains stale `fantastical-mcp` references in title, clone/cd commands, and MCP config path examples.
+
+This creates onboarding errors (wrong clone URL / directory names) and contradicts the resolved package rename.
+
+**Fix plan:**
+1. Replace remaining `fantastical-mcp` references in `README.md` with `fantastical-cli`.
+2. Verify quick-start and MCP config snippets are copy-paste correct.
+3. Add a small docs sanity check test/lint (or review checklist) to catch future rename drift.
+
+
+## MCP-CONTRACT — Docs still describe a thin JSON wrapper, but server now optimizes for compact text + caches
+
+**Priority:** P2
+
+The original "thin JSON wrapper" description is stale. `server.py` now intentionally includes context-shrink output formatting and in-memory caches (event IDs + attendee cache), and most tools return compact/plain text rather than JSON.
+
+Current docs still imply all MCP tools return `json.dumps()` and that the server is a thin pass-through, which no longer matches reality.
+
+**Fix plan:**
+1. Update `AGENTS.md` architecture/layer notes to describe the current MCP server role (tool-facing formatting + cache lifecycle).
+2. Update README MCP section with the actual tool list and response format expectations.
+3. Decide and document a stable response contract per tool (text vs JSON), including rationale and parsing guidance.
+
+
+## INPUT-PIPE — Forbid `|` in title query inputs to shortcut transport
+
+**Priority:** P3
+
+Shortcut input uses `start|end|titleQuery` framing. A literal pipe inside the title query collides with the delimiter and gets split into extra fields, silently truncating/mangling the query.
+
+Pragmatic resolution: explicitly reject `|` in title query inputs for both event search and attendee lookup, with a clear user-facing error.
+
+**Fix plan:**
+1. Add validation before building shortcut input payloads (`get_events` / `get_attendees` path).
+2. Raise a clear API error message instructing users to remove/replace `|`.
+3. Add tests for rejection behavior.
+
+
+## LOCALE-DATES — Add non-English Shortcuts date parsing support
+
+**Priority:** P4
+
+Current event date parsing is English-only (`"%d %b %Y %H:%M"` style), so localized month names from non-English macOS/Shortcuts locales may fail to parse.
+
+**Fix plan:**
+1. Add locale-aware date parsing strategy (or normalize date output in shortcuts to locale-neutral format).
+2. Add tests with non-English month names/locales.
+3. Keep current English parsing as a fast path.
+
+
 ## ATTENDEES — Enrich event data with attendees and emails
 
 **Priority:** P1
@@ -88,5 +171,4 @@ pytest suite in `tests/` covering parsing, API logic, shortcut generation, and s
 ## ~~IMPORTS — Move inline stdlib imports to top of `cli.py`~~ ✓ RESOLVED
 
 Moved `subprocess` and `time` to top-level imports in cli.py.
-
 
