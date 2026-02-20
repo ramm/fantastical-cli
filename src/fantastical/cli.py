@@ -252,9 +252,9 @@ def setup(force):
         click.echo('     -> Click "Replace Shortcut" to update each one')
     else:
         click.echo('     -> Click "Add Shortcut" to accept each one')
-    click.echo("  3. On first use, Fantastical will show a privacy prompt:")
-    click.echo('     "Allow ... to share 1 text item with Fantastical?"')
-    click.echo('     -> Click "Always Allow"')
+    click.echo("  3. A test run will trigger privacy prompts for each shortcut:")
+    click.echo('     "Allow ... to interact with Fantastical?"')
+    click.echo('     -> Click "Always Allow" for each prompt')
     click.echo()
 
     if not click.confirm("Proceed?"):
@@ -313,11 +313,13 @@ def setup(force):
         click.echo(f"  [ok] {name}")
     click.echo()
 
-    # Test the shortcut to trigger privacy grant
-    click.secho("Testing shortcut with today's events...", bold=True)
+    # Test both shortcuts to trigger privacy grants.
+    # Each shortcut has its own CalendarItemQuery which triggers a separate
+    # "smart prompt" (privacy dialog) on first run after import.
+    click.secho("Testing shortcuts to trigger privacy grants...", bold=True)
     click.echo()
     if not force:
-        click.echo("  macOS will show a privacy dialog:")
+        click.echo("  macOS will show a privacy dialog for each shortcut:")
         click.echo('    "Allow ... to interact with Fantastical?"')
         click.echo()
         click.secho('  IMPORTANT: Click "Always Allow" (not "Allow Once")', bold=True)
@@ -326,16 +328,38 @@ def setup(force):
         click.pause("  Press any key to run the test...")
 
     try:
-        events = api.list_events(from_date="today", to_date="today")
+        # 1. Warm up Find Events
         click.echo()
+        click.echo("  Testing Find Events...")
+        events = api.list_events(from_date="today", to_date="today")
         if events:
-            click.secho(f"  Got {len(events)} event(s) for today.", fg="green")
+            click.secho(f"    Got {len(events)} event(s) for today.", fg="green")
             for ev in events[:3]:
-                click.echo(f"    - {ev.get('title', '(no title)')}")
+                click.echo(f"      - {ev.get('title', '(no title)')}")
             if len(events) > 3:
-                click.echo(f"    ... and {len(events) - 3} more")
+                click.echo(f"      ... and {len(events) - 3} more")
         else:
-            click.secho("  No events for today (that's OK — shortcut is working).", fg="green")
+            click.secho("    No events for today (that's OK — shortcut is working).", fg="green")
+
+        # 2. Warm up Find Attendees — use the first event's title, or a dummy
+        #    query that won't match. Either way the CalendarItemQuery runs and
+        #    triggers the privacy grant.
+        click.echo()
+        click.echo("  Testing Find Attendees...")
+        if events:
+            ev = events[0]
+            attendees = api.get_event_attendees(
+                from_date="today", to_date="today",
+                title=ev.get("title", ""),
+            )
+            click.secho(f"    Got {len(attendees)} attendee(s).", fg="green")
+        else:
+            # No events today — run with a dummy query to trigger privacy grant
+            api.get_event_attendees(
+                from_date="today", to_date="today", title="__setup_warmup__",
+            )
+            click.secho("    Privacy grant triggered (no events to test with).", fg="green")
+
     except Exception as e:
         click.echo()
         click.secho(f"  Test failed: {e}", fg="red")

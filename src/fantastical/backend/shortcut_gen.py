@@ -855,15 +855,20 @@ def build_find_attendees() -> dict:
       Input "start|end|title"
         → Split/Detect/Adjust dates + CalendarItemQuery
         → Get Item from List (index=1)  ← first matching event
-        → FKRGetAttendeesFromEventIntent(calendarItem=above)
-        → Repeat Each (over attendees)
-          → Text(displayString FS email RS)
-        → End Repeat
-        → Text(Repeat Results)  ← taint launder
+        → If "has any value"  ← guard against nil (prevents modal dialog)
+          → FKRGetAttendeesFromEventIntent(calendarItem=above)
+          → Repeat Each (over attendees)
+            → Text(displayString FS email RS)
+          → End Repeat
+          → Text(Repeat Results)  ← taint launder
+        → Otherwise (no match — empty output)
+        → End If
         → Output
     """
     query_uuid = _uuid()
     get_first_uuid = _uuid()
+    if_group_uuid = _uuid()
+    if_output_uuid = _uuid()
     attendees_uuid = _uuid()
     group_uuid = _uuid()
     repeat_output_uuid = _uuid()
@@ -880,6 +885,18 @@ def build_find_attendees() -> dict:
         _get_item_from_list_action(
             get_first_uuid, query_uuid,
             "Fantastical Calendar Item", index=1,
+        ),
+
+        # Guard: only fetch attendees if the query matched an event.
+        # Without this, FKRGetAttendeesFromEventIntent receives a nil
+        # calendarItem and shows a "Select an event" modal dialog.
+        _if_has_value_start(
+            _var_attachment(
+                var_type="ActionOutput",
+                output_uuid=get_first_uuid,
+                output_name="Item from List",
+            ),
+            if_group_uuid,
         ),
 
         # Get attendees from that event
@@ -918,6 +935,12 @@ def build_find_attendees() -> dict:
             ),
             text_wrap_uuid,
         ),
+
+        # Otherwise: no event matched — output nothing
+        _if_otherwise(if_group_uuid),
+
+        # End If
+        _if_end(if_group_uuid, if_output_uuid),
 
         # Output
         _output_action(_token_string_param(

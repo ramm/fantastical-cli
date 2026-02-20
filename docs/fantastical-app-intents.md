@@ -88,6 +88,10 @@ The main entity. Properties:
 
 **Accessing attendees:** Do NOT use `Repeat Item.attendees` property aggrandizement on `IntentCalendarItem` — it crashes BackgroundShortcutRunner (`-[WFLinkEntityContentItem...IntentAttendee if_map:]` unrecognized selector). Use `FKRGetAttendeesFromEventIntent` instead, which returns `IntentAttendee` entities that can be iterated and coerced to text.
 
+**`FKRGetAttendeesFromEventIntent` gotchas:**
+- **Nil calendarItem → modal dialog:** If the `calendarItem` parameter is nil (e.g., because a CalendarItemQuery returned 0 results and Get Item from List produced nil), the intent shows a blocking "Select an event" picker dialog instead of failing gracefully. Guard with an If "has any value" check before calling.
+- **Repeat Each loop limit (~260 iterations):** When called inside a Repeat Each loop processing many events, the macOS Shortcuts runtime creates a duplicate action instance after ~260 iterations. The duplicate can't resolve the `calendarItem` parameter from the Repeat Item variable, triggering the same "Select an event" modal. Workaround: batch queries into smaller date ranges (4-day windows) on the caller side so each shortcut run stays well under 260 events. See `_CHUNK_DAYS` in `shortcuts.py`.
+
 ### IntentConference (`Fantastical.IntentConference`) — transient
 - `identifier` — string
 - `displayString` — string

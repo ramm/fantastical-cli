@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+import threading
 
 # Shortcut names used by this tool
 SHORTCUT_PREFIX = "Fantastical - "
@@ -111,12 +112,13 @@ def run_shortcut(key: str, input_text: str | None = None) -> str:
     if input_text:  # intentionally falsy — empty string means "no input"
         cmd.extend(["-i", input_text])
 
-    result = subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
+    with _shortcut_lock:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
 
     if result.returncode != 0:
         stderr = result.stderr.strip()
@@ -136,6 +138,8 @@ EVENT_FIELDS = ["title", "startDate", "endDate", "calendarIdentifier", "fantasti
 
 ATTENDEE_FIELDS = ["displayString", "email"]
 
+
+_shortcut_lock = threading.Lock()
 
 RECORD_SEPARATOR = "\x1e"
 FIELD_SEPARATOR = "\x1f"
@@ -191,6 +195,15 @@ def parse_shortcut_output(output: str, field_names: list[str] | None = None) -> 
     return results
 
 
+# Maximum days per shortcut run for event queries.
+# FKRGetAttendeesFromEventIntent inside the Find Events shortcut's Repeat Each
+# loop triggers a macOS Shortcuts runtime bug after ~260 iterations: the runtime
+# creates a duplicate action instance whose calendarItem parameter can't be
+# resolved, showing a blocking "Select an event" modal.  Batching into smaller
+# date ranges keeps each run well under that threshold.
+_CHUNK_DAYS = 4
+
+
 def get_events(from_date: str, to_date: str, title_query: str = "") -> list[dict]:
     """Get events in a date range via CalendarItemQuery.
 
@@ -204,16 +217,28 @@ def get_events(from_date: str, to_date: str, title_query: str = "") -> list[dict
     The shortcut receives the dates and title query as input and queries
     Fantastical directly with server-side filtering.
 
+    Large date ranges are automatically split into _CHUNK_DAYS-day windows
+    to work around a macOS Shortcuts runtime bug (see _CHUNK_DAYS).
+
     Note: CalendarItemQuery's "between" operator excludes the end date,
     so we add 1 day to make to_date inclusive from the caller's perspective.
     """
     from datetime import date, timedelta
 
-    # Make end date inclusive: CalendarItemQuery "between" excludes end
-    end_exclusive = (date.fromisoformat(to_date) + timedelta(days=1)).isoformat()
-    input_text = f"{from_date}|{end_exclusive}|{title_query}"
-    output = run_shortcut("find_events", input_text=input_text)
-    return parse_shortcut_output(output)
+    start = date.fromisoformat(from_date)
+    end = date.fromisoformat(to_date)
+
+    all_events: list[dict] = []
+    chunk_start = start
+    while chunk_start <= end:
+        chunk_end = min(chunk_start + timedelta(days=_CHUNK_DAYS - 1), end)
+        end_exclusive = (chunk_end + timedelta(days=1)).isoformat()
+        input_text = f"{chunk_start.isoformat()}|{end_exclusive}|{title_query}"
+        output = run_shortcut("find_events", input_text=input_text)
+        all_events.extend(parse_shortcut_output(output))
+        chunk_start = chunk_end + timedelta(days=1)
+
+    return all_events
 
 
 def get_attendees(from_date: str, to_date: str, title_query: str = "") -> list[dict]:

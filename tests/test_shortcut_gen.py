@@ -190,9 +190,10 @@ def test_find_events_client_version():
 
 
 def test_find_attendees_action_count():
-    # 9 input date actions + 1 get_item + 1 attendee_intent + 1 repeat_start
-    # + 1 text + 1 repeat_end + 1 text_wrap + 1 output = 16
-    assert len(_find_attendees_actions()) == 16
+    # 9 input date actions + 1 get_item + 1 if_start + 1 attendee_intent
+    # + 1 repeat_start + 1 text + 1 repeat_end + 1 text_wrap
+    # + 1 if_otherwise + 1 if_end + 1 output = 19
+    assert len(_find_attendees_actions()) == 19
 
 
 def test_find_attendees_all_uuids_unique():
