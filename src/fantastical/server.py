@@ -15,8 +15,9 @@ mcp = FastMCP("fantastical")
 
 # --- Event cache ---
 
-_event_cache: dict[str, dict] = {}  # event_id → full event dict
-_cache_lock = threading.Lock()       # thread-safe for parallel tool calls
+_event_cache: dict[str, dict] = {}          # event_id → full event dict
+_attendee_cache: dict[str, list[dict]] = {} # event_id → [{"displayString": ..., "email": ...}]
+_cache_lock = threading.Lock()              # thread-safe for parallel tool calls
 
 
 def _hash_event(event: dict) -> str:
@@ -38,7 +39,7 @@ def _cache_and_compact(events: list[dict]) -> str:
             eid = _hash_event(ev)
             ev["id"] = eid
             _event_cache[eid] = ev  # store/update ALL fields
-            lines.append(f"{eid}\t{ev.get('title')}\t{ev.get('startDate')}\t{ev.get('endDate')}")
+            lines.append(f"{eid}\t{ev.get('title')}\t{ev.get('startDate')}\t{ev.get('endDate')}\t{ev.get('attendeeCount', '')}")
     header = f"count: {len(events)}"
     return header + "\n" + "\n".join(lines)
 
@@ -64,7 +65,7 @@ async def list_events(from_date: str = "today", to_date: str | None = None, cale
     Accepts 'today', 'tomorrow', 'yesterday', or YYYY-MM-DD. Defaults to today only.
     Start with 2-week chunks. If results are sparse, increase to months or more.
 
-    Returns compact tab-separated output: id, title, startDate, endDate.
+    Returns compact tab-separated output: id, title, startDate, endDate, attendeeCount.
     All events are cached — use get_event_details for full data (calendar, URL, etc.).
     Can be called in parallel for different date ranges.
     """
@@ -102,21 +103,67 @@ async def get_event_details(event_id: str) -> str:
 
     Returns all fields: title, startDate, endDate, calendar, fantasticalURL, calendarName.
     Events are cached from previous list_events/search_events calls.
+    Attendees are fetched lazily on first request and cached for the session.
     """
     with _cache_lock:
         ev = _event_cache.get(event_id)
     if ev is None:
         return f"Event {event_id} not found in cache. Run list_events or search_events first."
-    return "\n".join(f"{k}: {v}" for k, v in ev.items())
+
+    lines = [f"{k}: {v}" for k, v in ev.items()]
+
+    # Lazy-fetch attendees
+    attendees = await _fetch_attendees(event_id, ev)
+    if attendees:
+        lines.append("attendees:")
+        for a in attendees:
+            lines.append(f"  {a.get('displayString', '?')} <{a.get('email', '')}>")
+
+    return "\n".join(lines)
+
+
+async def _fetch_attendees(event_id: str, ev: dict) -> list[dict] | None:
+    """Fetch attendees for an event, using cache when available.
+
+    Returns list of attendee dicts, empty list if no attendees,
+    or None if the date couldn't be parsed.
+    """
+    with _cache_lock:
+        cached = _attendee_cache.get(event_id)
+    if cached is not None:
+        return cached
+
+    start_iso = _parse_date_to_iso(ev.get("startDate"))
+    if not start_iso:
+        return None
+
+    attendees = await asyncio.to_thread(
+        api.get_event_attendees, start_iso, start_iso, ev.get("title", ""),
+    )
+
+    with _cache_lock:
+        _attendee_cache[event_id] = attendees
+
+    return attendees
 
 
 @mcp.tool()
 async def clear_cache() -> str:
-    """Clear the in-memory event cache.
+    """Clear the in-memory event and attendee caches.
 
     Use when starting a fresh analysis session.
     """
     with _cache_lock:
         count = len(_event_cache)
         _event_cache.clear()
+        _attendee_cache.clear()
     return f"Cache cleared ({count} events removed)."
+
+
+def _parse_date_to_iso(date_str: str | None) -> str | None:
+    """Parse an event date string to ISO format (YYYY-MM-DD).
+
+    Wraps api._parse_event_date() for use in the server layer.
+    """
+    d = api._parse_event_date(date_str)
+    return d.isoformat() if d else None

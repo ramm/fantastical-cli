@@ -9,7 +9,7 @@ import pytest
 from mcp.server.fastmcp.exceptions import ToolError
 
 from fantastical.api import FantasticalError
-from fantastical.server import _event_cache, _cache_lock, _hash_event, _cache_and_compact, mcp
+from fantastical.server import _event_cache, _attendee_cache, _cache_lock, _hash_event, _cache_and_compact, mcp
 
 
 def _text(result: tuple) -> str:
@@ -21,6 +21,7 @@ def _clear_cache():
     """Helper to reset cache between tests."""
     with _cache_lock:
         _event_cache.clear()
+        _attendee_cache.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -98,7 +99,8 @@ async def test_list_events_all_args(mock_le):
 async def test_list_events_compact_output(mock_le):
     events = [
         {"title": "Standup", "startDate": "9 Feb 2026 at 10:00", "endDate": "9 Feb 2026 at 10:30",
-         "calendarIdentifier": "cal1", "fantasticalURL": "x-fantastical3://show/1"},
+         "calendarIdentifier": "cal1", "fantasticalURL": "x-fantastical3://show/1",
+         "attendeeCount": "3"},
     ]
     mock_le.return_value = events
     result = await mcp.call_tool("list_events", {"from_date": "2026-02-09"})
@@ -106,11 +108,12 @@ async def test_list_events_compact_output(mock_le):
     lines = text.strip().split("\n")
     assert lines[0] == "count: 1"
     parts = lines[1].split("\t")
-    assert len(parts) == 4  # id, title, startDate, endDate
+    assert len(parts) == 5  # id, title, startDate, endDate, attendeeCount
     assert len(parts[0]) == 8  # 8-char hash
     assert parts[1] == "Standup"
     assert parts[2] == "9 Feb 2026 at 10:00"
     assert parts[3] == "9 Feb 2026 at 10:30"
+    assert parts[4] == "3"
 
 
 @pytest.mark.anyio
@@ -502,3 +505,116 @@ def test_threaded_same_event_150_writes():
     assert cached["id"] == expected_id
     assert cached["title"] == "Daily"
     assert cached["fantasticalURL"] == "x-fantastical3://show/daily"
+
+
+# --- get_event_details with attendees ---
+
+
+@pytest.mark.anyio
+@patch("fantastical.server.api.get_event_attendees")
+@patch("fantastical.server.api.list_events")
+async def test_get_event_details_includes_attendees(mock_le, mock_ga):
+    """get_event_details lazily fetches and includes attendees."""
+    events = [{"title": "Standup", "startDate": "9 Feb 2026 at 10:00", "endDate": "9 Feb 2026 at 10:30",
+               "calendarIdentifier": "cal1", "fantasticalURL": "x-fantastical3://show/1",
+               "attendeeCount": "2"}]
+    mock_le.return_value = events
+    mock_ga.return_value = [
+        {"displayString": "Alice", "email": "alice@example.com"},
+        {"displayString": "Bob", "email": "bob@example.com"},
+    ]
+
+    await mcp.call_tool("list_events", {"from_date": "2026-02-09"})
+    eid = list(_event_cache.keys())[0]
+
+    result = await mcp.call_tool("get_event_details", {"event_id": eid})
+    text = _text(result)
+    assert "title: Standup" in text
+    assert "attendees:" in text
+    assert "Alice <alice@example.com>" in text
+    assert "Bob <bob@example.com>" in text
+    mock_ga.assert_called_once()
+
+    # Attendees should now be cached
+    assert eid in _attendee_cache
+    assert len(_attendee_cache[eid]) == 2
+
+
+@pytest.mark.anyio
+@patch("fantastical.server.api.get_event_attendees")
+@patch("fantastical.server.api.list_events")
+async def test_get_event_details_attendee_cache_hit(mock_le, mock_ga):
+    """Second get_event_details returns cached attendees without shortcut call."""
+    events = [{"title": "Standup", "startDate": "9 Feb 2026 at 10:00", "endDate": "9 Feb 2026 at 10:30",
+               "calendarIdentifier": "cal1", "fantasticalURL": "x-fantastical3://show/1",
+               "attendeeCount": "1"}]
+    mock_le.return_value = events
+    mock_ga.return_value = [{"displayString": "Alice", "email": "alice@example.com"}]
+
+    await mcp.call_tool("list_events", {"from_date": "2026-02-09"})
+    eid = list(_event_cache.keys())[0]
+
+    # First call — cache miss
+    await mcp.call_tool("get_event_details", {"event_id": eid})
+    assert mock_ga.call_count == 1
+
+    # Second call — cache hit
+    result = await mcp.call_tool("get_event_details", {"event_id": eid})
+    assert mock_ga.call_count == 1  # not called again
+    text = _text(result)
+    assert "Alice <alice@example.com>" in text
+
+
+@pytest.mark.anyio
+@patch("fantastical.server.api.get_event_attendees")
+@patch("fantastical.server.api.list_events")
+async def test_get_event_details_no_attendees(mock_le, mock_ga):
+    """get_event_details omits attendees section when there are none."""
+    events = [{"title": "Solo", "startDate": "9 Feb 2026 at 10:00", "endDate": "9 Feb 2026 at 10:30",
+               "calendarIdentifier": "cal1", "fantasticalURL": "x-fantastical3://show/2",
+               "attendeeCount": "0"}]
+    mock_le.return_value = events
+    mock_ga.return_value = []
+
+    await mcp.call_tool("list_events", {"from_date": "2026-02-09"})
+    eid = list(_event_cache.keys())[0]
+
+    result = await mcp.call_tool("get_event_details", {"event_id": eid})
+    text = _text(result)
+    assert "title: Solo" in text
+    assert "attendees:" not in text
+
+
+@pytest.mark.anyio
+@patch("fantastical.server.api.list_events")
+async def test_get_event_details_unparseable_date_skips_attendees(mock_le):
+    """get_event_details skips attendees when the date can't be parsed."""
+    events = [{"title": "NoDate", "startDate": "garbage", "endDate": "garbage",
+               "calendarIdentifier": "c", "fantasticalURL": "url"}]
+    mock_le.return_value = events
+    await mcp.call_tool("list_events", {"from_date": "2026-02-09"})
+    eid = list(_event_cache.keys())[0]
+
+    result = await mcp.call_tool("get_event_details", {"event_id": eid})
+    text = _text(result)
+    assert "title: NoDate" in text
+    assert "attendees:" not in text
+
+
+@pytest.mark.anyio
+@patch("fantastical.server.api.list_events")
+async def test_clear_cache_clears_attendees(mock_le):
+    """clear_cache removes both event and attendee caches."""
+    events = [{"title": "A", "startDate": "s", "endDate": "e",
+               "calendarIdentifier": "c", "fantasticalURL": "u"}]
+    mock_le.return_value = events
+    await mcp.call_tool("list_events", {"from_date": "2026-02-09"})
+    eid = list(_event_cache.keys())[0]
+
+    # Manually populate attendee cache
+    with _cache_lock:
+        _attendee_cache[eid] = [{"displayString": "Alice", "email": "a@b.com"}]
+
+    await mcp.call_tool("clear_cache", {})
+    assert len(_event_cache) == 0
+    assert len(_attendee_cache) == 0

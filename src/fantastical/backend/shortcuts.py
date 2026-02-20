@@ -8,6 +8,7 @@ import subprocess
 SHORTCUT_PREFIX = "Fantastical - "
 SHORTCUTS = {
     "find_events": f"{SHORTCUT_PREFIX}Find Events",
+    "find_attendees": f"{SHORTCUT_PREFIX}Find Attendees",
 }
 
 # Legacy shortcut names (for migration detection)
@@ -130,17 +131,20 @@ def run_shortcut(key: str, input_text: str | None = None) -> str:
 
 
 # Field names matching EVENT_PROPS order in shortcut_gen.py
-EVENT_FIELDS = ["title", "startDate", "endDate", "calendarIdentifier", "fantasticalURL"]
+# attendeeCount is appended after EVENT_PROPS by the Count action in the shortcut.
+EVENT_FIELDS = ["title", "startDate", "endDate", "calendarIdentifier", "fantasticalURL", "attendeeCount"]
+
+ATTENDEE_FIELDS = ["displayString", "email"]
 
 
 RECORD_SEPARATOR = "\x1e"
 FIELD_SEPARATOR = "\x1f"
 
 
-def _parse_fields(parts: list[str]) -> dict:
-    """Parse a list of field values into an event dict."""
+def _parse_fields(parts: list[str], field_names: list[str] = EVENT_FIELDS) -> dict:
+    """Parse a list of field values into a dict using the given field names."""
     item: dict = {}
-    for i, name in enumerate(EVENT_FIELDS):
+    for i, name in enumerate(field_names):
         if i < len(parts):
             val = parts[i].strip()
             if val in ("", "nil", "null", "(null)"):
@@ -152,22 +156,29 @@ def _parse_fields(parts: list[str]) -> dict:
     return item
 
 
-def parse_shortcut_output(output: str) -> list[dict]:
-    """Parse shortcut output into list of event dicts.
+def parse_shortcut_output(output: str, field_names: list[str] | None = None) -> list[dict]:
+    """Parse shortcut output into list of dicts.
 
     Fields are separated by ASCII Unit Separator (0x1F) — safe even when
     event titles contain pipes.  Records are separated by ASCII Record
     Separator (0x1E), so fields can safely contain newlines (e.g.,
     multi-line locations, attendee lists).
 
+    Args:
+        output: Raw shortcut output text.
+        field_names: Field names to parse. Defaults to EVENT_FIELDS.
+
     Expected format per record (matching EVENT_PROPS in shortcut_gen.py):
-    TITLE\x1fSTART\x1fEND\x1fCALENDAR\x1fURL\x1e
+    TITLE\x1fSTART\x1fEND\x1fCALENDAR\x1fURL\x1fATTENDEE_COUNT\x1e
     """
+    if field_names is None:
+        field_names = EVENT_FIELDS
+
     if not output:
         return []
 
     results = []
-    num_fields = len(EVENT_FIELDS)
+    num_fields = len(field_names)
 
     for record in output.split(RECORD_SEPARATOR):
         record = record.strip()
@@ -175,7 +186,7 @@ def parse_shortcut_output(output: str) -> list[dict]:
             continue
 
         parts = record.split(FIELD_SEPARATOR, num_fields - 1)
-        results.append(_parse_fields(parts))
+        results.append(_parse_fields(parts, field_names))
 
     return results
 
@@ -203,6 +214,27 @@ def get_events(from_date: str, to_date: str, title_query: str = "") -> list[dict
     input_text = f"{from_date}|{end_exclusive}|{title_query}"
     output = run_shortcut("find_events", input_text=input_text)
     return parse_shortcut_output(output)
+
+
+def get_attendees(from_date: str, to_date: str, title_query: str = "") -> list[dict]:
+    """Get attendees for a specific event via the Find Attendees shortcut.
+
+    Args:
+        from_date: Start date as YYYY-MM-DD (inclusive).
+        to_date: End date as YYYY-MM-DD (inclusive).
+        title_query: Title substring filter to identify the event.
+
+    Returns list of attendee dicts with displayString and email fields.
+
+    Note: CalendarItemQuery's "between" operator excludes the end date,
+    so we add 1 day to make to_date inclusive from the caller's perspective.
+    """
+    from datetime import date, timedelta
+
+    end_exclusive = (date.fromisoformat(to_date) + timedelta(days=1)).isoformat()
+    input_text = f"{from_date}|{end_exclusive}|{title_query}"
+    output = run_shortcut("find_attendees", input_text=input_text)
+    return parse_shortcut_output(output, field_names=ATTENDEE_FIELDS)
 
 
 def check_legacy_shortcuts() -> list[str]:

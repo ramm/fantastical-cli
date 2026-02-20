@@ -62,18 +62,22 @@ Shortcuts are generated as binary plists, signed via `shortcuts sign --mode anyo
 
 **Key format discovery:** App Intent parameters MUST use `WFTextTokenString` encoding (string + attachmentsByRange with U+FFFC placeholders), NOT `WFTextTokenAttachment`. Using the wrong encoding causes Fantastical to show interactive pickers instead of using the bound variable. See `docs/shortcuts-format.md` for the full technical deep-dive.
 
-**Current shortcut:**
+**Current shortcuts:**
 
 | Name | Intent / Query | Purpose | Status |
 |------|---------------|---------|--------|
-| `Fantastical - Find Events` | `CalendarItemQuery` (IntentCalendarItem) | Events across ALL calendars | **Working** — end-to-end verified |
+| `Fantastical - Find Events` | `CalendarItemQuery` + `FKRGetAttendeesFromEventIntent` + Count | Events with attendee counts across ALL calendars | **Working** — end-to-end verified |
+| `Fantastical - Find Attendees` | `CalendarItemQuery` + `FKRGetAttendeesFromEventIntent` | Attendee details (name + email) for a specific event | **Working** — end-to-end verified |
 
-The find events shortcut flow: Input "start|end|titleQuery" → Split Text → Get Item 1 → Detect Dates → Adjust Date +0d → Get Item 2 → Detect Dates → Adjust Date +0d → Get Item 3 (title query) → CalendarItemQuery(startDate between adj1..adj2 AND title contains item3) → Repeat Each → delimited text (title`\x1f`start`\x1f`end`\x1f`cal`\x1f`fantasticalURL) → Text wrap → Output. Fields use ASCII Unit Separator (0x1F); records end with Record Separator (0x1E). The caller passes the exact date range and optional title query as shortcut input; empty title = no-op (matches all events). Both `list_events` and `search_events` use this single shortcut — search passes the query string for server-side filtering.
+**Find Events flow:** Input "start|end|titleQuery" → Split Text → Get Item 1 → Detect Dates → Adjust Date +0d → Get Item 2 → Detect Dates → Adjust Date +0d → Get Item 3 (title query) → CalendarItemQuery(startDate between adj1..adj2 AND title contains item3) → Repeat Each (over events) → FKRGetAttendeesFromEventIntent(Repeat Item) → Count → Text(title`\x1f`start`\x1f`end`\x1f`cal`\x1f`url`\x1f`attendeeCount`\x1e`) → End Repeat → Text wrap → Output. Fields use ASCII Unit Separator (0x1F); records end with Record Separator (0x1E). The caller passes the exact date range and optional title query as shortcut input; empty title = no-op (matches all events). Both `list_events` and `search_events` use this single shortcut — search passes the query string for server-side filtering.
+
+**Find Attendees flow:** Same input parsing as Find Events → CalendarItemQuery → Get Item 1 (first matching event) → FKRGetAttendeesFromEventIntent → Repeat Each (over attendees) → Text(displayString`\x1f`email`\x1e`) → End Repeat → Text wrap → Output. Uses Level 4 pattern (single-level Repeat Each) because nested Repeat Each fails for inner property access (see `_experiments/22_attendees_level1.py`). Called on demand from `get_event_details` with lazy caching.
 
 **Key discoveries:**
 - Dynamic dates in CalendarItemQuery `Values.Date`/`Values.AnotherDate` ARE possible using Adjust Date action outputs with `WFTextTokenAttachment` refs. The critical requirement is that `WFDuration` must use **string values** (`Magnitude: "14"`, `Unit: "days"`), NOT integers. Using integers silently breaks the Adjust Date output, causing the CalendarItemQuery to return 0 items without crashing. Discovered by extracting a working plist from a shortcut created in Shortcuts.app UI.
 - **Output action taint tracking:** Data from third-party apps is "tainted" — Output action refuses to emit it directly (`WFActionErrorDomain Code=4`, "missing an appIdentifier"). **Fix:** wrap Repeat Results in a Text action before Output to "launder" the data through a built-in action.
-- `EVENT_PROPS` = `["title", "startDate", "endDate", "calendarIdentifier", "fantasticalURL"]`. The `fantasticalURL` is a deep link back into Fantastical; it includes `calendarIdentifier` in the URL, so it's unique per calendar copy (not a cross-calendar dedup key).
+- `EVENT_PROPS` = `["title", "startDate", "endDate", "calendarIdentifier", "fantasticalURL"]`. The `fantasticalURL` is a deep link back into Fantastical; it includes `calendarIdentifier` in the URL, so it's unique per calendar copy (not a cross-calendar dedup key). Note: `attendeeCount` is NOT in EVENT_PROPS — it's an ActionOutput from the Count action, appended separately in the text template.
+- `ATTENDEE_PROPS` = `["displayString", "email"]`. Only these two properties are usable on `IntentAttendee` entities (identifier is always empty). See `docs/fantastical-app-intents.md` for details.
 - Date format from Shortcuts is currently parsed in **English-only** month format (e.g., "12 Feb 2026 at 12:00"). Non-English locale month names are not supported yet.
 - Caller passes exact date range. No hard cap — MCP tool descriptions guide agents to start with 2-week chunks and widen if the calendar is sparse.
 - **WFDuration gotcha:** The Adjust Date action's `WFDuration` must use **string** values for `Magnitude` and `Unit` (e.g., `"14"` and `"days"`). Using integers (e.g., `14` and `4`) silently produces broken output that causes CalendarItemQuery to return 0 items. This was the root cause of 7 failed dynamic date experiments before extracting a working plist from Shortcuts.app.
@@ -94,6 +98,10 @@ The first run of a new shortcut triggers a **privacy dialog** ("Allow ... to acc
 3. Add entry to `SHORTCUTS` dict in `shortcuts.py`
 4. Add wrapper function in `shortcuts.py` that calls `run_shortcut()` + parser
 5. Wire through `api.py` -> `cli.py` -> `server.py`
+
+### Experiment shortcuts
+
+The `_experiments/` directory contains Python scripts that generate test shortcuts for probing Fantastical's App Intent behavior. **Always write generated `.shortcut` binary files to `/tmp`**, not to the repo — they are signed binary plists that bloat git and can be regenerated from the scripts. The Python scripts themselves should be committed as research documentation.
 
 ### Shortcut file locations
 

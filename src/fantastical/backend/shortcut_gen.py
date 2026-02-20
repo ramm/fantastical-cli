@@ -128,6 +128,9 @@ def _text_token_string(template_parts: list[str], attachments: list[dict]) -> di
 RECORD_SEPARATOR = "\x1e"
 FIELD_SEPARATOR = "\x1f"
 
+ATTENDEE_INTENT_ID = "FKRGetAttendeesFromEventIntent"
+ATTENDEE_OUTPUT_NAME = "Invitees from Event"
+
 
 def _delimited_text(prop_names: list[str]) -> dict:
     """Build a WFTextTokenString for delimited Repeat Item properties.
@@ -347,6 +350,28 @@ def _output_action(output_ref: dict) -> dict:
         "WFWorkflowActionIdentifier": "is.workflow.actions.output",
         "WFWorkflowActionParameters": {
             "WFOutput": output_ref,
+        },
+    }
+
+
+def _count_action(action_uuid: str, input_ref: dict) -> dict:
+    """Build a Count action (is.workflow.actions.count)."""
+    return {
+        "WFWorkflowActionIdentifier": "is.workflow.actions.count",
+        "WFWorkflowActionParameters": {
+            "UUID": action_uuid,
+            "Input": input_ref,
+        },
+    }
+
+
+def _text_action_with_uuid(text_content: dict, action_uuid: str) -> dict:
+    """Build a Text action with an explicit UUID."""
+    return {
+        "WFWorkflowActionIdentifier": "is.workflow.actions.gettext",
+        "WFWorkflowActionParameters": {
+            "UUID": action_uuid,
+            "WFTextActionText": text_content,
         },
     }
 
@@ -728,22 +753,185 @@ def build_find_events() -> dict:
         → Get Item 2 → Detect Dates → Adjust Date +0d (end)
         → Get Item 3 (title query text)
         → CalendarItemQuery(startDate between start..end AND title contains title)
-        → Repeat Each → delimited text
-        → Text wrap (bypasses taint tracking)
+        → Repeat Each (over events)
+          → FKRGetAttendeesFromEventIntent(calendarItem=Repeat Item)
+          → Count(attendees)
+          → Text(title FS startDate FS endDate FS calId FS url FS count RS)
+        → End Repeat
+        → Text(Repeat Results)  ← taint launder
+        → Output
+
+    Note: attendeeCount is NOT in EVENT_PROPS because it's an ActionOutput
+    from the Count action, not a Repeat Item property. It's appended to the
+    text template separately.
+    """
+    query_uuid = _uuid()
+    group_uuid = _uuid()
+    attendees_uuid = _uuid()
+    count_uuid = _uuid()
+    repeat_output_uuid = _uuid()
+    text_wrap_uuid = _uuid()
+
+    date_actions = _input_date_query_actions(query_uuid)
+
+    # Repeat Item as WFTextTokenString for the calendarItem App Intent param
+    repeat_item_token = _text_token_string(
+        ["", ""],
+        [{"Type": "Variable", "VariableName": "Repeat Item"}],
+    )
+
+    # Build text template: EVENT_PROPS as Repeat Item properties + Count as ActionOutput
+    prop_attachments = [_repeat_item_property(p)["Value"] for p in EVENT_PROPS]
+    count_attachment = {
+        "Type": "ActionOutput",
+        "OutputUUID": count_uuid,
+        "OutputName": "Count",
+    }
+    all_attachments = prop_attachments + [count_attachment]
+    parts = [""] + [FIELD_SEPARATOR] * (len(all_attachments) - 1) + [RECORD_SEPARATOR]
+    event_text = _text_token_string(parts, all_attachments)
+
+    repeat_actions = [
+        # Repeat Each (over calendar items)
+        _repeat_each_start(
+            _var_attachment(var_type="ActionOutput", output_uuid=query_uuid,
+                           output_name="Fantastical Calendar Item"),
+            group_uuid,
+        ),
+        # Get attendees from Repeat Item
+        _fantastical_action(
+            ATTENDEE_INTENT_ID,
+            attendees_uuid,
+            extra_params={
+                "calendarItem": repeat_item_token,
+            },
+        ),
+        # Count the invitees
+        _count_action(
+            count_uuid,
+            _var_attachment(
+                var_type="ActionOutput",
+                output_uuid=attendees_uuid,
+                output_name=ATTENDEE_OUTPUT_NAME,
+            ),
+        ),
+        # Format event as delimited text (props + count)
+        _text_action(event_text),
+        # End repeat
+        _repeat_each_end(group_uuid, repeat_output_uuid),
+        # Wrap repeat results in Text action (bypasses taint tracking)
+        _text_action_with_uuid(
+            _token_string_param(
+                output_uuid=repeat_output_uuid,
+                output_name="Repeat Results",
+            ),
+            text_wrap_uuid,
+        ),
+        # Output the Text result
+        _output_action(_token_string_param(
+            output_uuid=text_wrap_uuid,
+            output_name="Text",
+        )),
+    ]
+
+    actions = [*date_actions, *repeat_actions]
+    return _build_shortcut_plist("Fantastical - Find Events", actions, accepts_input=True)
+
+
+ATTENDEE_PROPS = ["displayString", "email"]
+
+
+def build_find_attendees() -> dict:
+    """Build the 'Fantastical - Find Attendees' shortcut plist.
+
+    Returns attendee details (displayString + email) for a specific event.
+    Uses Level 4 pattern: single event extraction with a non-nested
+    Repeat Each over attendees for property access.
+
+    The caller passes "YYYY-MM-DD|YYYY-MM-DD|titleQuery" (start|end|title)
+    as shortcut input — same format as find_events.
+
+    Flow:
+      Input "start|end|title"
+        → Split/Detect/Adjust dates + CalendarItemQuery
+        → Get Item from List (index=1)  ← first matching event
+        → FKRGetAttendeesFromEventIntent(calendarItem=above)
+        → Repeat Each (over attendees)
+          → Text(displayString FS email RS)
+        → End Repeat
+        → Text(Repeat Results)  ← taint launder
         → Output
     """
     query_uuid = _uuid()
+    get_first_uuid = _uuid()
+    attendees_uuid = _uuid()
+    group_uuid = _uuid()
+    repeat_output_uuid = _uuid()
+    text_wrap_uuid = _uuid()
+
     date_actions = _input_date_query_actions(query_uuid)
+
+    attendee_text = _delimited_text(ATTENDEE_PROPS)
 
     actions = [
         *date_actions,
-        *_repeat_text_output_actions(query_uuid, EVENT_PROPS),
+
+        # Get first event from query results
+        _get_item_from_list_action(
+            get_first_uuid, query_uuid,
+            "Fantastical Calendar Item", index=1,
+        ),
+
+        # Get attendees from that event
+        _fantastical_action(
+            ATTENDEE_INTENT_ID,
+            attendees_uuid,
+            extra_params={
+                "calendarItem": _token_string_param(
+                    output_uuid=get_first_uuid,
+                    output_name="Item from List",
+                ),
+            },
+        ),
+
+        # Repeat Each over attendees
+        _repeat_each_start(
+            _var_attachment(
+                var_type="ActionOutput",
+                output_uuid=attendees_uuid,
+                output_name=ATTENDEE_OUTPUT_NAME,
+            ),
+            group_uuid,
+        ),
+
+        # Format each attendee as delimited text
+        _text_action(attendee_text),
+
+        # End repeat
+        _repeat_each_end(group_uuid, repeat_output_uuid),
+
+        # Taint-launder Repeat Results through Text
+        _text_action_with_uuid(
+            _token_string_param(
+                output_uuid=repeat_output_uuid,
+                output_name="Repeat Results",
+            ),
+            text_wrap_uuid,
+        ),
+
+        # Output
+        _output_action(_token_string_param(
+            output_uuid=text_wrap_uuid,
+            output_name="Text",
+        )),
     ]
-    return _build_shortcut_plist("Fantastical - Find Events", actions, accepts_input=True)
+
+    return _build_shortcut_plist("Fantastical - Find Attendees", actions, accepts_input=True)
 
 
 SHORTCUT_BUILDERS = {
     "find_events": ("Fantastical - Find Events", build_find_events),
+    "find_attendees": ("Fantastical - Find Attendees", build_find_attendees),
 }
 
 

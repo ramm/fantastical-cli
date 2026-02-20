@@ -199,6 +199,19 @@ def search_events(
 
 
 
+def get_event_attendees(from_date: str, to_date: str, title: str = "") -> list[dict]:
+    """Get attendees for a specific event.
+
+    Requires shortcuts. Uses a 1-day window + title filter to find the event,
+    then returns its attendees (displayString + email).
+    """
+    resolved_from = _resolve_date(from_date)
+    resolved_to = _resolve_date(to_date) if to_date else resolved_from
+    return _run_shortcut_or_raise(
+        "find_attendees", shortcuts.get_attendees, resolved_from, resolved_to, title,
+    )
+
+
 def get_shortcut_names() -> dict[str, str]:
     """Get shortcut key → display name mapping.
 

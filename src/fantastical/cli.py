@@ -66,11 +66,15 @@ def _format_events(events: list[dict]):
         else:
             time_str = ""
 
+        count = ev.get("attendeeCount")
+
         line = f"  {title}"
         if time_str:
             line += f"  ({time_str})"
         if cal:
             line += f"  [{cal}]"
+        if count and count != "0":
+            line += f"  [{count} attendees]"
         if location:
             line += f"  @ {location}"
         click.echo(line)

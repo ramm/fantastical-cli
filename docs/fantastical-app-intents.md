@@ -14,7 +14,7 @@ Extracted from `/Applications/Fantastical.app/Contents/Resources/Metadata.appint
 | `FKROverdueRemindersIntent` | Overdue Tasks | `Fantastical.OverdueTasks` | (none) | intentCalendarItems |
 | `FKRUpcomingCalendarItemIntent` | Upcoming Item | `Fantastical.UpcomingCalendarItem` | itemType (IntentItemType enum) | title, time, intentCalendarItem |
 | `FKRCreateFromInputIntent` | Create From Input | `Fantastical.CreateFromInput` | input (string), notes (string) | title, dateTime, intentCalendarItem |
-| `FKRGetAttendeesFromEventIntent` | Get Invitees from Event | `Fantastical.GetAttendeesFromEvent` | calendarItem (IntentCalendarItem) | attendees |
+| `FKRGetAttendeesFromEventIntent` | Get Invitees from Event | `Fantastical.GetAttendeesFromEvent` | calendarItem (IntentCalendarItem) | attendees (IntentAttendee[]) |
 
 ### UI/navigation actions (open Fantastical, less useful for CLI)
 
@@ -80,9 +80,13 @@ The main entity. Properties:
 - `name` — string
 
 ### IntentAttendee (`Fantastical.IntentAttendee`) — transient
-- `identifier` — string
-- `displayString` — string
-- `email` — string
+- `identifier` — string (**always empty** in practice — experiment 22 Level 5)
+- `displayString` — string (attendee's display name; for rooms, the room name e.g. "MR-NL-3B-Steam engine")
+- `email` — string (attendee's email; for rooms, the resource mailbox e.g. "MR-NL-3B-Steamengine@nebius.com")
+
+**Only these 3 properties exist.** Confirmed by inspecting `extract.actionsdata` and probing 14 property names in experiment 22. EventKit metadata (participant type, role, status) is **not** surfaced — Fantastical does not expose whether an attendee is a person vs. room/resource, or required vs. optional. Use email/name heuristics to classify (rooms typically have prefixes like `MR-`, `CR-`, `Room:` in their displayString/email).
+
+**Accessing attendees:** Do NOT use `Repeat Item.attendees` property aggrandizement on `IntentCalendarItem` — it crashes BackgroundShortcutRunner (`-[WFLinkEntityContentItem...IntentAttendee if_map:]` unrecognized selector). Use `FKRGetAttendeesFromEventIntent` instead, which returns `IntentAttendee` entities that can be iterated and coerced to text.
 
 ### IntentConference (`Fantastical.IntentConference`) — transient
 - `identifier` — string

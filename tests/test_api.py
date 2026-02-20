@@ -10,6 +10,7 @@ from fantastical.api import (
     _get_events_for_range,
     _parse_event_date,
     _resolve_date,
+    get_event_attendees,
     list_events,
     search_events,
 )
@@ -282,3 +283,40 @@ def test_get_events_passes_title_query(mock_run, mock_cal_map):
     call_args = mock_run.call_args
     # _run_shortcut_or_raise("find_events", shortcuts.get_events, from_iso, to_iso, title_query)
     assert call_args[0][4] == "test"
+
+
+# --- get_event_attendees ---
+
+
+@patch("fantastical.api._run_shortcut_or_raise")
+def test_get_event_attendees(mock_run):
+    mock_run.return_value = [
+        {"displayString": "Alice", "email": "alice@example.com"},
+        {"displayString": "Bob", "email": "bob@example.com"},
+    ]
+    result = get_event_attendees("2026-02-20", "2026-02-20", "Meeting")
+    assert len(result) == 2
+    assert result[0]["displayString"] == "Alice"
+    assert result[1]["email"] == "bob@example.com"
+    # Verify correct args passed
+    call_args = mock_run.call_args[0]
+    assert call_args[0] == "find_attendees"
+    assert call_args[2] == "2026-02-20"
+    assert call_args[3] == "2026-02-20"
+    assert call_args[4] == "Meeting"
+
+
+@patch("fantastical.api._run_shortcut_or_raise")
+def test_get_event_attendees_empty(mock_run):
+    mock_run.return_value = []
+    result = get_event_attendees("2026-02-20", "2026-02-20")
+    assert result == []
+
+
+@patch("fantastical.api._run_shortcut_or_raise")
+def test_get_event_attendees_resolves_today(mock_run):
+    mock_run.return_value = []
+    get_event_attendees("today", "today", "test")
+    call_args = mock_run.call_args[0]
+    assert call_args[2] == date.today().isoformat()
+    assert call_args[3] == date.today().isoformat()
