@@ -22,3 +22,9 @@ Commits: 8749281
 ## Reasoning
 
 Server-side filtering via CalendarItemQuery is dramatically faster — Fantastical filters internally before serializing results, so the shortcut returns only matching events. This also unified the two code paths (list and search) into one shortcut with one input format, reducing maintenance surface. The delimiter change from pipe to `\x1F` was done opportunistically to prevent a known collision risk with event titles containing literal pipes.
+
+## Related experiments
+
+- `_experiments/18_input_dates.py` — validated passing date ranges as shortcut input (Split Text → Detect Dates → Adjust Date laundering pattern)
+- `_experiments/19_title_filter.py` — validated CalendarItemQuery title contains filter (Operator 99) with dynamic variable binding
+- `_experiments/19b_title_static.py` — control test with static title filter to isolate variable binding issues

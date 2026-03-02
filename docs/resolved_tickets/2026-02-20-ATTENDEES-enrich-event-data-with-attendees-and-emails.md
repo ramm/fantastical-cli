@@ -59,6 +59,12 @@ Attendee counts are cheap (Count action in the existing Find Events loop) so the
 
 The 4-day chunking for Find Events is a pragmatic workaround for an apparent macOS Shortcuts runtime bug — the exact threshold (~260 iterations) was determined empirically.
 
+## Related experiments
+
+- `_experiments/20_attendees.py` — first attempt at FKRGetAttendeesFromEventIntent integration; validated the intent works and attendee count is accessible
+- `_experiments/21_attendees_refs.py` — tested four different variable binding encodings for referencing intent output (ActionOutput+OutputName, ActionOutput+OutputUUID, VariableName variants); determined correct binding pattern
+- `_experiments/22_attendees_level1.py` — incremental 5-level test that isolated the nested Repeat Each failure (Level 3) and proved the single-level "Level 4" pattern works; also cataloged all IntentAttendee properties (Level 5: only displayString and email are populated)
+
 ## Remaining gap
 
 CLI has no command for full event details + attendees (only MCP `get_event_details` exposes this). Tracked in CLI-DETAILS.

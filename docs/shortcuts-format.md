@@ -733,7 +733,7 @@ On modern macOS, the If action uses `WFConditions` with `WFContentPredicateTable
 }
 ```
 
-**Status:** Not yet validated. Our attempt to use condition 100 ("has any value") to guard a nested Repeat Each over nil attendees produced "Please choose a value for each parameter" error with the flat format, and still crashed with the WFContentPredicateTableTemplate format. The exact working format may need to be discovered by having the user create an If shortcut manually (same reverse-engineering approach as CalendarItemQuery).
+**Status:** Working. The flat format (condition 100, "has any value") is used in production in `build_find_attendees()` to guard `FKRGetAttendeesFromEventIntent` against nil calendarItem. The earlier "Please choose a value for each parameter" error was caused by incorrect variable binding, not by the If action format itself. See `_experiments/22_attendees_level1.py` (Level 4) for the incremental validation that confirmed this.
 
 ## Debugging with macOS unified logs
 
@@ -829,6 +829,26 @@ Properties tested via `WFPropertyVariableAggrandizement` on `IntentCalendarItem`
 | `hexColorString` | Untested | |
 | `availability` | Untested | |
 | `conferences` | Untested | |
+
+### Attendee data extraction
+
+Direct property access on `attendees` crashes (see above). The working approach uses `FKRGetAttendeesFromEventIntent` ("Get Invitees from Event") — a dedicated Fantastical intent that takes a calendar item and returns `IntentAttendee` entities.
+
+**IntentAttendee properties** (validated in `_experiments/22_attendees_level1.py`, Level 5):
+
+| Property | Status | Notes |
+|----------|--------|-------|
+| `displayString` | Works | Human-readable name |
+| `email` | Works | Email address |
+| `identifier` | Always empty | Exists in schema but Fantastical doesn't populate it |
+
+All EventKit-style properties (`type`, `role`, `status`, `participantType`, `participantRole`, `participantStatus`, `isResource`, `isRequired`, `isOptional`, `isOrganizer`) are absent — Fantastical does not expose attendee role/type through App Intents. Meeting rooms appear as regular attendees with identifiable names/emails (e.g., `MR-NL-3B-Steamengine@nebius.com`).
+
+**Nested Repeat Each fails for attendee property access.** When iterating events (outer Repeat Each) and then attendees (inner Repeat Each), the inner Repeat Item's properties (`displayString`, `email`) resolve to empty strings. The root cause is unknown — likely a Shortcuts runtime bug with nested Repeat Each over App Entity arrays. Discovered in `_experiments/22_attendees_level1.py` (Level 3 vs Level 4).
+
+**Working pattern ("Level 4"):** Use a single-level Repeat Each over attendees from a single event. The production `build_find_attendees()` shortcut uses this: CalendarItemQuery → Get Item 1 → FKRGetAttendeesFromEventIntent → Repeat Each (over attendees) → Text(displayString + email). For bulk attendee counts across multiple events, `build_find_events()` uses FKRGetAttendeesFromEventIntent → Count inside the event Repeat Each (count doesn't need property access, so it works at any nesting level).
+
+**~260 iteration runtime bug.** When `FKRGetAttendeesFromEventIntent` runs inside a Repeat Each loop, the macOS Shortcuts runtime creates a duplicate action instance after approximately 260 iterations. The duplicate's `calendarItem` parameter can't be resolved, showing a blocking "Select an event" modal dialog. Workaround: batch date ranges into small chunks (currently 4 days) on the Python side. See `shortcuts.py:_CHUNK_DAYS`.
 
 ## Output parsing
 
