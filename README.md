@@ -76,7 +76,7 @@ This checks which helper shortcuts are installed and gives step-by-step instruct
 
 ## MCP server
 
-To use fantastical-mcp as an MCP server (e.g. with Claude Desktop), start it in stdio mode:
+To use fantastical-cli as an MCP server (e.g. with Claude Desktop), start it in stdio mode:
 
 ```bash
 uv run fantastical serve
@@ -89,13 +89,24 @@ Or add it to your MCP client config:
   "mcpServers": {
     "fantastical": {
       "command": "uv",
-      "args": ["run", "--directory", "/path/to/fantastical-mcp", "fantastical", "serve"]
+      "args": ["run", "--directory", "/path/to/fantastical-cli", "fantastical", "serve"]
     }
   }
 }
 ```
 
-The server exposes these tools: `list_calendars`, `list_events`, `create_event`, `search_events`.
+The server exposes these tools:
+
+| Tool | Description | Response format |
+|------|-------------|-----------------|
+| `list_calendars` | List all calendars | Plain text, one per line |
+| `list_events` | Events in a date range | Compact tab-separated (id, title, start, end, attendeeCount) |
+| `search_events` | Search events by title | Same as `list_events` |
+| `create_event` | Create event via natural language | JSON |
+| `get_event_details` | Full details of a cached event | Key-value text with attendees |
+| `clear_cache` | Clear in-memory event/attendee caches | Status message |
+
+List and search results are cached in memory — use `get_event_details` to retrieve full data (calendar, URL, attendees) for a specific event.
 
 ## CLI reference
 

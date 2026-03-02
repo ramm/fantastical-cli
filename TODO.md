@@ -2,10 +2,6 @@
 
 > **This file is for issues, problems, and action plans only.** Do not add development notes, workflow tips, reference material, or general documentation here — those belong in `AGENTS.md` or `docs/`.
 
-## ~~CALFIELD — Rename misleading `calendar` field to `calendarIdentifier`~~ ✓ RESOLVED
-
-Renamed `EVENT_FIELDS[3]` from `"calendar"` to `"calendarIdentifier"` in `shortcuts.py`. Updated all references in `api.py`, `cli.py`, `server.py`, and all tests.
-
 
 ## LAYER-SETUP — `cli.setup` bypasses `api.py` and imports backend directly
 
@@ -36,6 +32,20 @@ But `--from/--to` are options on `events list`, not on the `events` group. The c
 2. Add/adjust a CLI output test to prevent this regression.
 
 
+## CLI-DETAILS — Add CLI command for event details + attendees
+
+**Priority:** P2
+
+`get_event_details` (with lazy attendee fetching) only exists as an MCP tool in `server.py`. Terminal users can list events and see attendee counts, but there's no way to drill into a single event to see full details and attendee names/emails.
+
+**Fix plan:**
+1. Add `api.get_event_details()` that takes a date range + title filter, finds the event, fetches attendees, and returns the enriched dict.
+2. Add `fantastical events details` CLI command (or similar) that displays full event info including attendees.
+3. Reuse `get_event_attendees()` for the attendee fetch — the plumbing already exists.
+4. Add `--json` support for machine-readable output.
+5. Add tests for the new API function and CLI command.
+
+
 ## DOCS-NAME — README still uses old `fantastical-mcp` name/paths
 
 **Priority:** P3
@@ -49,19 +59,6 @@ This creates onboarding errors (wrong clone URL / directory names) and contradic
 2. Verify quick-start and MCP config snippets are copy-paste correct.
 3. Add a small docs sanity check test/lint (or review checklist) to catch future rename drift.
 
-
-## MCP-CONTRACT — Docs still describe a thin JSON wrapper, but server now optimizes for compact text + caches
-
-**Priority:** P2
-
-The original "thin JSON wrapper" description is stale. `server.py` now intentionally includes context-shrink output formatting and in-memory caches (event IDs + attendee cache), and most tools return compact/plain text rather than JSON.
-
-Current docs still imply all MCP tools return `json.dumps()` and that the server is a thin pass-through, which no longer matches reality.
-
-**Fix plan:**
-1. Update `AGENTS.md` architecture/layer notes to describe the current MCP server role (tool-facing formatting + cache lifecycle).
-2. Update README MCP section with the actual tool list and response format expectations.
-3. Decide and document a stable response contract per tool (text vs JSON), including rationale and parsing guidance.
 
 
 ## INPUT-PIPE — Forbid `|` in title query inputs to shortcut transport
@@ -90,18 +87,6 @@ Current event date parsing is English-only (`"%d %b %Y %H:%M"` style), so locali
 3. Keep current English parsing as a fast path.
 
 
-## ATTENDEES — Enrich event data with attendees and emails
-
-**Priority:** P1
-
-Currently `EVENT_PROPS` has 5 fields (title, startDate, endDate, calendarIdentifier, fantasticalURL). Attendee data is missing.
-
-**Why not just add `attendees` to `EVENT_PROPS`:** Accessing `Repeat Item.attendees` via property aggrandizement (`if_map:` / `WFContentItemPropertyName`) crashes BackgroundShortcutRunner — `IntentAttendee` entities don't support text coercion. This is a Shortcuts runtime limitation, not a Fantastical bug.
-
-**Approach:** Use `FKRGetAttendeesFromEventIntent` ("Get Invitees from Event") — a dedicated intent that takes an event and returns attendees. Chain: Find Events → Repeat Each → Get Invitees → format. This also requires solving the If/Otherwise/End If action format on macOS 15+ (to guard nil values), which hasn't worked yet. Both problems will be addressed together during implementation. Note: `_if_has_value_start()`, `_if_otherwise()`, and `_if_end()` helpers already exist in `shortcut_gen.py` (lines 206-256) — untested, may need adjustment.
-
-See `docs/shortcuts-format.md` for crash details and the reverse-engineering approach for If actions.
-
 
 ## EDIT — Edit existing events
 
@@ -128,47 +113,13 @@ No edit/update capability exists yet. Fantastical's 16 App Intents are all read-
 **Fix:** Create a shortcut wrapping `FKRCreateFromInputIntent`, output created event properties.
 
 
-## ~~SEARCH — Search performance~~ ✓ RESOLVED
-
-Title filter added to CalendarItemQuery (Operator 99, `title contains`). Both `list_events` and `search_events` now use one shortcut with server-side filtering. Input format: `start|end|titleQuery` (empty title = no-op). Python-side title filtering removed from `search_events()`.
 
 
-## ~~PKGNAME — Package name `fantastical-mcp` doesn't match the project~~ ✓ RESOLVED
-
-Renamed package from `fantastical-mcp` to `fantastical-cli` in pyproject.toml.
 
 
-## ~~LAYER — Backend constants `SHORTCUTS`/`LEGACY_SHORTCUTS` leak through API to CLI~~ ✓ RESOLVED
-
-Replaced re-exported dicts with `api.get_shortcut_names()` and `api.check_legacy_shortcuts()`. cli.py no longer imports backend constants.
 
 
-## ~~ADD-OUTPUT — `add` command doesn't use `_output()` helper~~ ✓ RESOLVED
-
-Refactored `add` command to use `_output()` like every other command.
 
 
-## ~~CALMAP-EXCEPT — Fix redundant exception handling in `_get_calendar_map`~~ ✓ RESOLVED
 
-Narrowed `except (JXAError, Exception)` to `except (JXAError, KeyError)` — catches JXA timeouts and dict issues, surfaces real bugs.
-
-
-## ~~SHOWSCHEDULE — Remove redundant `show_schedule()` function~~ ✓ RESOLVED
-
-Replaced `api.show_schedule("today")` with `api.list_events(from_date="today", to_date="today")` in cli.py setup test. Deleted `show_schedule()` from api.py.
-
-
-## ~~MCP — MCP server testing~~ ✓ RESOLVED
-
-pytest suite in `tests/test_server.py` covering tool registration, argument passing, JSON serialization, and error propagation. Uses `FastMCP.call_tool()` with mocked `api.*` — no macOS dependencies.
-
-
-## ~~TESTS — Unit tests~~ ✓ RESOLVED
-
-pytest suite in `tests/` covering parsing, API logic, shortcut generation, and shortcut runner integration. All tests use pure Python or `unittest.mock` — no macOS dependencies.
-
-
-## ~~IMPORTS — Move inline stdlib imports to top of `cli.py`~~ ✓ RESOLVED
-
-Moved `subprocess` and `time` to top-level imports in cli.py.
 
